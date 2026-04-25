@@ -4,6 +4,14 @@
   "description": "Web-based chat interface for the Hermes AI agent (NousResearch)",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lotsoftick/hermes_client.git"
+  },
+  "homepage": "https://github.com/lotsoftick/hermes_client#readme",
+  "bugs": {
+    "url": "https://github.com/lotsoftick/hermes_client/issues"
+  },
   "scripts": {
     "setup": "node scripts/setup.js",
     "dev": "node scripts/dev.js",

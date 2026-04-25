@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -125,9 +125,20 @@ export function deploy() {
     recursive: true,
     force: true,
   });
+  // The Python PTY bridge replaces our previous `node-pty` dependency.
+  // Copy it next to the compiled app code so the runtime resolver finds
+  // it via `path.resolve(__dirname, '../../../pty-bridge.py')`.
   const ptyBridgeSrc = path.join(API_SRC, 'pty-bridge.py');
   if (existsSync(ptyBridgeSrc)) {
-    cpSync(ptyBridgeSrc, path.join(apiDist, 'build', 'pty-bridge.py'), { force: true });
+    const ptyBridgeDest = path.join(apiDist, 'pty-bridge.py');
+    cpSync(ptyBridgeSrc, ptyBridgeDest, { force: true });
+    try {
+      chmodSync(ptyBridgeDest, 0o755);
+    } catch {
+      /* permission setting is best-effort; python3 doesn't need +x to run it */
+    }
+  } else {
+    process.stdout.write('  ⚠️  pty-bridge.py missing — interactive terminals will not work\n');
   }
   cpSync(path.join(API_SRC, 'package.json'), path.join(apiDist, 'package.json'));
   cpSync(path.join(API_SRC, 'package-lock.json'), path.join(apiDist, 'package-lock.json'));
@@ -222,6 +233,9 @@ export function deploy() {
     JSON.stringify({
       version: rootPkg.version,
       sourceRepo,
+      // Surfaced to `updateService.readLocalMeta()` so production installs
+      // can poll the upstream `package.json` for new versions.
+      repoHttpsUrl: repoUrl || null,
     })
   );
 

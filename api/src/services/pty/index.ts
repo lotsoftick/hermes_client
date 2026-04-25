@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { IPty, spawn as spawnPty } from 'node-pty';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import os from 'os';
@@ -11,35 +11,52 @@ import { HERMES_BIN } from '../hermes/paths';
 import { JwtPayload } from '../../@types/blacklist';
 
 /**
- * node-pty ships a `spawn-helper` binary that must be executable, but some
- * npm/registry/CI flows strip the +x bit during extraction. Without it every
- * `pty.spawn()` fails with the cryptic "posix_spawnp failed". Restore +x on
- * boot so the install self-heals.
+ * Interactive terminals are powered by a tiny Python PTY bridge
+ * (`api/pty-bridge.py`) instead of the `node-pty` native module. Hermes
+ * itself is a Python CLI, so `python3` is always installed on every host
+ * where this client runs — using the stdlib `pty` module gives us a
+ * portable, build-free terminal layer with no native binaries that can
+ * lose their +x bit on deploy ("posix_spawnp failed").
+ *
+ * Wire protocol (see `pty-bridge.py` for the source of truth):
+ *   - bridge stdout  → raw PTY bytes (forwarded straight to the WebSocket)
+ *   - bridge stderr  → newline-delimited JSON status events
+ *       {"t":"ready","pid":N} | {"t":"exit","code":N,"signal":N|null}
+ *       {"t":"error","msg":"..."}
+ *   - bridge stdin   → newline-delimited JSON commands FROM us
+ *       {"t":"in","d":"<utf8>"} | {"t":"resize","c":N,"r":N} | {"t":"kill"}
  */
-function ensureSpawnHelperExecutable(): void {
-  const platformDir = `${process.platform}-${process.arch}`;
-  const helper = path.resolve(
-    __dirname,
-    '../../../node_modules/node-pty/prebuilds',
-    platformDir,
-    'spawn-helper'
+
+/** Locate `pty-bridge.py` in either dev (`api/`) or prod (`api/build/`). */
+function findPtyBridge(): string {
+  const candidates = [
+    path.resolve(__dirname, '../../../pty-bridge.py'),
+    path.resolve(__dirname, '../../../../pty-bridge.py'),
+  ];
+  const hit = candidates.find((c) => fs.existsSync(c));
+  if (hit) return hit;
+  throw new Error(
+    `pty-bridge.py not found; tried: ${candidates.join(', ')}. ` +
+      `Set HERMES_CLIENT_PTY_BRIDGE to the absolute path.`
   );
-  try {
-    const stat = fs.statSync(helper);
-    const isExec = (stat.mode & 0o111) !== 0;
-    if (!isExec) {
-      fs.chmodSync(helper, 0o755);
-      console.log(`[pty] restored +x on ${helper}`);
-    }
-  } catch {
-    /* missing or not applicable on this platform; ignore */
-  }
+}
+
+/** Resolve a usable `python3` interpreter. The bridge only uses stdlib. */
+function resolvePython(): string {
+  const fromEnv = process.env.HERMES_CLIENT_PYTHON;
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const hit = [
+    '/usr/bin/python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+  ].find((p) => fs.existsSync(p));
+  return hit ?? 'python3';
 }
 
 /**
- * Ensure the PATH inherited by child processes also includes the user-local
- * install dirs we use to find `hermes`. This matters when the API was started
- * from a launcher whose PATH is minimal (Finder, IDE, systemd, etc.).
+ * Augment the inherited PATH with the user-local install dirs we use to
+ * find `hermes`. Matters when the API was started from a launcher whose
+ * PATH is minimal (Finder, IDE, systemd, etc.).
  */
 function buildChildPath(): string {
   const home = os.homedir();
@@ -50,9 +67,11 @@ function buildChildPath(): string {
     '/usr/local/bin',
   ];
   const current = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const merged = Array.from(new Set([...extras, ...current]));
-  return merged.join(path.delimiter);
+  return Array.from(new Set([...extras, ...current])).join(path.delimiter);
 }
+
+const PTY_BRIDGE = process.env.HERMES_CLIENT_PTY_BRIDGE || findPtyBridge();
+const PYTHON_BIN = resolvePython();
 
 /** Subcommands the user is allowed to launch from the browser. */
 const ALLOWED_SUBCOMMANDS = new Set([
@@ -67,7 +86,7 @@ const ALLOWED_SUBCOMMANDS = new Set([
 ]);
 
 interface PtyConnectParams {
-  /** Hermes profile to scope the command to (sets HERMES_PROFILE). */
+  /** Hermes profile to scope the command to (`-p <profile>`). */
   profile?: string;
   /** First positional arg, e.g. "setup" or "config". Restricted by ALLOWED_SUBCOMMANDS. */
   cmd: string;
@@ -81,6 +100,14 @@ interface ClientMessage {
   data?: string;
   cols?: number;
   rows?: number;
+}
+
+interface BridgeEvent {
+  t: 'ready' | 'exit' | 'error';
+  pid?: number;
+  code?: number | null;
+  signal?: number | null;
+  msg?: string;
 }
 
 function parseQuery(req: http.IncomingMessage): URL {
@@ -112,41 +139,111 @@ function parseConnectParams(url: URL): PtyConnectParams | { error: string } {
   return { cmd, profile, cols, rows };
 }
 
-function buildArgs(params: PtyConnectParams): string[] {
+function buildHermesArgs(params: PtyConnectParams): string[] {
   const args: string[] = [];
   if (params.profile && params.profile !== 'default') args.push('-p', params.profile);
   args.push(params.cmd);
   return args;
 }
 
+/** Consume any complete JSON lines in `buf`, return the residual tail. */
+function processStderrLines(buf: string, onEvent: (e: BridgeEvent) => void): string {
+  let cursor = 0;
+  let nl = buf.indexOf('\n', cursor);
+  while (nl >= 0) {
+    const line = buf.slice(cursor, nl).trim();
+    cursor = nl + 1;
+    if (line) {
+      try {
+        onEvent(JSON.parse(line) as BridgeEvent);
+      } catch {
+        // Non-JSON noise from python (warnings, tracebacks). Surface them
+        // to our log so spawn failures are diagnosable.
+        console.warn(`[pty-bridge] ${line}`);
+      }
+    }
+    nl = buf.indexOf('\n', cursor);
+  }
+  return buf.slice(cursor);
+}
+
 /**
- * Bridges a node-pty process to a WebSocket. Closes everything if either side
- * goes away. The wire format is intentionally minimal: server pushes raw PTY
- * bytes as binary frames; the client sends JSON messages for input/resize.
+ * Bridge the Python PTY child to a WebSocket. Closes everything if either
+ * side goes away.
  */
-function bridge(ws: WebSocket, pty: IPty): void {
+function bridge(ws: WebSocket, child: ChildProcessWithoutNullStreams, label: string): void {
   let alive = true;
+  let exitSent = false;
+
+  const sendCmd = (obj: Record<string, unknown>): void => {
+    if (!child.stdin.writable) return;
+    try {
+      child.stdin.write(`${JSON.stringify(obj)}\n`);
+    } catch {
+      /* noop */
+    }
+  };
+
+  const sendExit = (exitCode: number | null, sig: number | string | null): void => {
+    if (exitSent) return;
+    exitSent = true;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'exit', exitCode, signal: sig }));
+      ws.close(1000, 'process exited');
+    }
+  };
 
   const cleanup = (): void => {
     if (!alive) return;
     alive = false;
+    sendCmd({ t: 'kill' });
     try {
-      pty.kill();
+      child.kill('SIGTERM');
     } catch {
       /* noop */
     }
     if (ws.readyState === WebSocket.OPEN) ws.close();
   };
 
-  pty.onData((data) => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    ws.send(data);
+  child.stdout.on('data', (chunk: Buffer) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
   });
 
-  pty.onExit(({ exitCode, signal }) => {
+  let stderrBuf = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderrBuf += chunk.toString('utf8');
+    stderrBuf = processStderrLines(stderrBuf, (event) => {
+      if (event.t === 'ready') {
+        console.log(`[pty] ${label} ready (pid=${event.pid ?? '?'})`);
+      } else if (event.t === 'error') {
+        console.error(`[pty] ${label} bridge error: ${event.msg}`);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'error', error: event.msg ?? 'bridge error' }));
+        }
+      } else if (event.t === 'exit') {
+        sendExit(event.code ?? null, event.signal ?? null);
+        alive = false;
+      }
+    });
+  });
+
+  child.on('exit', (code, sig) => {
+    // Flush any tail bytes from stderr before reporting exit.
+    if (stderrBuf.trim()) {
+      processStderrLines(`${stderrBuf}\n`, (event) => {
+        if (event.t === 'exit') sendExit(event.code ?? null, event.signal ?? null);
+      });
+      stderrBuf = '';
+    }
+    sendExit(code ?? null, sig ?? null);
+    alive = false;
+  });
+
+  child.on('error', (err) => {
+    console.error(`[pty] ${label} bridge spawn error: ${err.message}`);
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'exit', exitCode, signal }));
-      ws.close(1000, 'process exited');
+      ws.send(JSON.stringify({ type: 'error', error: err.message }));
+      ws.close(1011, 'bridge spawn failed');
     }
     alive = false;
   });
@@ -156,9 +253,9 @@ function bridge(ws: WebSocket, pty: IPty): void {
     try {
       const msg = JSON.parse(raw.toString()) as ClientMessage;
       if (msg.type === 'input' && typeof msg.data === 'string') {
-        pty.write(msg.data);
+        sendCmd({ t: 'in', d: msg.data });
       } else if (msg.type === 'resize' && msg.cols && msg.rows) {
-        pty.resize(Math.max(20, msg.cols), Math.max(5, msg.rows));
+        sendCmd({ t: 'resize', c: Math.max(20, msg.cols), r: Math.max(5, msg.rows) });
       }
     } catch {
       /* ignore malformed frames */
@@ -172,10 +269,10 @@ function bridge(ws: WebSocket, pty: IPty): void {
 /**
  * Attach a `/ws/pty` upgrade handler to an existing http server.
  * Validates JWT (?token=...), restricts allowed subcommands, then
- * spawns `hermes -p <profile> <cmd>` in a real PTY and proxies it.
+ * spawns `python3 pty-bridge.py hermes -p <profile> <cmd>` and proxies
+ * the resulting PTY to the WebSocket.
  */
 function attachPtyWebSocket(server: http.Server): void {
-  ensureSpawnHelperExecutable();
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
@@ -198,41 +295,57 @@ function attachPtyWebSocket(server: http.Server): void {
       return;
     }
 
-    const args = buildArgs(params);
-    console.log(`[pty] upgrade ok → spawning: ${HERMES_BIN} ${args.join(' ')}`);
+    const args = buildHermesArgs(params);
+    const label = `${HERMES_BIN} ${args.join(' ')}`;
+    console.log(`[pty] upgrade ok → spawning bridge: ${label}`);
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      let pty: IPty;
+      let child: ChildProcessWithoutNullStreams;
       try {
-        pty = spawnPty(HERMES_BIN, args, {
-          name: 'xterm-256color',
-          cols: params.cols ?? 100,
-          rows: params.rows ?? 30,
+        child = spawn(PYTHON_BIN, [PTY_BRIDGE, HERMES_BIN, ...args], {
+          stdio: ['pipe', 'pipe', 'pipe'],
           cwd: process.env.HOME || process.cwd(),
           env: {
             ...process.env,
             TERM: 'xterm-256color',
+            COLUMNS: String(params.cols ?? 100),
+            LINES: String(params.rows ?? 30),
             PATH: buildChildPath(),
-          } as Record<string, string>,
+          },
         });
-        console.log(`[pty] spawned pid=${pty.pid} for cmd=${params.cmd}`);
       } catch (err) {
         const message = (err as Error).message || String(err);
-        console.error(`[pty] spawn failed: ${message}`);
+        console.error(`[pty] bridge spawn failed: ${message}`);
         ws.send(
           JSON.stringify({
             type: 'error',
-            error: `Failed to spawn '${HERMES_BIN}': ${message}`,
+            error: `Failed to spawn pty-bridge: ${message}`,
           })
         );
         ws.close(1011, 'spawn failed');
         return;
       }
-      bridge(ws, pty);
+
+      // Push the initial terminal size as the very first command so the
+      // child's PTY matches what xterm.js measured before any output.
+      if (params.cols && params.rows && child.stdin.writable) {
+        try {
+          child.stdin.write(
+            `${JSON.stringify({ t: 'resize', c: params.cols, r: params.rows })}\n`
+          );
+        } catch {
+          /* noop */
+        }
+      }
+
+      bridge(ws, child, label);
     });
   });
 
-  console.log(`[pty] /ws/pty WebSocket handler attached (hermes bin: ${HERMES_BIN})`);
+  console.log(`[pty] /ws/pty handler attached`);
+  console.log(`[pty]   python: ${PYTHON_BIN}`);
+  console.log(`[pty]   bridge: ${PTY_BRIDGE}`);
+  console.log(`[pty]   hermes: ${HERMES_BIN}`);
 }
 
 export { attachPtyWebSocket };

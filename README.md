@@ -7,7 +7,7 @@ A web-based chat interface for the [Hermes Agent](https://hermes-agent.nousresea
 - **Multi-agent via Hermes profiles** — every UI "agent" maps 1:1 to a Hermes [profile](https://hermes-agent.nousresearch.com/docs/user-guide/profiles), each with its own home directory, config, and sessions. Add, rename, and delete profiles from the UI; the corresponding `hermes profile …` commands run under the hood.
 - **CLI-driven streaming chat** — every turn spawns `hermes -p <profile> chat -Q -q "<message>"` and streams its stdout to the browser over Server-Sent Events. No `hermes gateway` required, no extra ports to open, no separate API server to babysit.
 - **Cross-app session sync** — sessions started in a standalone `hermes` REPL automatically appear in the sidebar within seconds. Continue a web-UI conversation from the terminal with `hermes -p <profile> chat -r <sessionKey>` and new turns stream straight back into the open chat.
-- **Interactive setup terminal** — a `node-pty` + `xterm.js` drawer hosts the real `hermes -p <profile> model` (and other config) commands when you create or reconfigure an agent, so API key wizards and arrow-key model pickers Just Work.
+- **Interactive setup terminal** — an `xterm.js` drawer (backed by a tiny Python PTY bridge that ships with the API) hosts the real `hermes -p <profile> model` (and other config) commands when you create or reconfigure an agent, so API key wizards and arrow-key model pickers Just Work.
 - **Brand model icons** — each agent shows its provider's logo (OpenAI, Anthropic, Google, Mistral, OpenRouter, Nous, …) sourced from [`@lobehub/icons`](https://github.com/lobehub/lobe-icons), with a one-click "configure model" prompt when none is set.
 - **File uploads** — drag files into the composer; they're stored under `~/.hermes_client/uploads/<conversationId>/` and Hermes is invoked with absolute paths via `--image` (for images) or referenced inline in the prompt (for everything else).
 - **Cron, skills, plugins** — surface Hermes' `cron`, `skills list`, and `plugins list/enable/disable` subcommands through the same UI shell.
@@ -18,7 +18,7 @@ A web-based chat interface for the [Hermes Agent](https://hermes-agent.nousresea
 ## Architecture
 
 - **Client** — React 19 + Vite + Material UI + Redux Toolkit Query, organized with [Feature-Sliced Design](https://feature-sliced.design/).
-- **API** — Express + TypeScript + TypeORM + SQLite. Talks to Hermes purely via the `hermes` CLI: `child_process.spawn` for streaming chat, `execFile` for management commands, `node-pty` over a `/ws/pty` WebSocket for interactive subcommands.
+- **API** — Express + TypeScript + TypeORM + SQLite. Talks to Hermes purely via the `hermes` CLI: `child_process.spawn` for streaming chat, `execFile` for management commands, and a Python PTY bridge (`api/pty-bridge.py`, using stdlib `pty`) over a `/ws/pty` WebSocket for interactive subcommands — no native node-pty build, no `spawn-helper` binary that can lose its `+x` bit on deploy.
 - **Source of truth for messages** — Hermes' own session JSON files at `~/.hermes/sessions/session_<id>.json` (default profile) or `~/.hermes/profiles/<name>/sessions/session_<id>.json` (named profiles). The client SQLite mirrors them (with stable `<sessionId>:<index>` ids) so the UI can paginate and search without touching disk on every render, and so externally-added turns reconcile cleanly.
 
 ## Prerequisites
@@ -42,7 +42,7 @@ If you keep `hermes` somewhere unusual, set `HERMES_BIN` in `api/.env` to its ab
 - **macOS / Linux** — works out of the box.
 - **Windows 10/11** — supported. Additionally requires:
   - **Git for Windows** (the auto-update flow uses `git`)
-  - **Visual Studio Build Tools** (for native modules `better-sqlite3` and `node-pty`).
+  - **Visual Studio Build Tools** (for the native module `better-sqlite3`).
   - Run **PowerShell as Administrator** the first time you execute `npm start` so that
     `npm link` can create the global `hermes_client` shim, and so that auto-start can
     be installed.
