@@ -2,6 +2,8 @@
 
 A web-based chat interface for the [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research. Manage multiple Hermes profiles as separate "agents", run conversations with full streaming, and configure cron jobs, skills, and plugins — all through a clean modern UI.
 
+https://github.com/user-attachments/assets/88351710-65c9-4052-bdca-7be3d788b7f0
+
 ## Features
 
 - **Multi-agent via Hermes profiles** — every UI "agent" maps 1:1 to a Hermes [profile](https://hermes-agent.nousresearch.com/docs/user-guide/profiles), each with its own home directory, config, and sessions. Add, rename, and delete profiles from the UI; the corresponding `hermes profile …` commands run under the hood.
