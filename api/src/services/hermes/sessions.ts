@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { hermesExec, stripAnsi } from './cli';
 import { profileSessionsDir } from './profiles';
+import { cleanMessageText } from './textCleanup';
 
 export interface HermesSession {
   id: string;
@@ -173,7 +174,13 @@ export function getSessionMessages(
   return rows.reduce<SessionMessage[]>((acc, row, idx) => {
     const role = row.role === 'assistant' || row.role === 'user' ? row.role : null;
     if (!role) return acc;
-    const text = (row.text ?? flattenContent(row.content)).trim();
+    const raw = (row.text ?? flattenContent(row.content)).trim();
+    // Strip Hermes-side prompt-engineering wrappers (auto-injected vision
+    // pre-analysis, image hints, file footers, resume banners). What we
+    // keep is what the human actually wrote / what the model actually
+    // replied — the rest is noise that would otherwise duplicate-display
+    // and break sync claim matching.
+    const text = cleanMessageText(role, raw);
     if (!text) return acc;
     const externalId = row.id || row.message_id || `${sessionId}:${idx}`;
     const ts = row.timestamp || row.created_at;

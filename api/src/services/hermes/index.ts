@@ -1,6 +1,7 @@
 export * from './paths';
 export * from './cli';
 export * from './profiles';
+export * from './textCleanup';
 export * from './sessions';
 export * from './chat';
 export * from './sync';

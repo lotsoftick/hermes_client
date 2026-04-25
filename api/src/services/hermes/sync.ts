@@ -2,6 +2,7 @@ import { IsNull, In } from 'typeorm';
 import AppDataSource from '../../data-source';
 import { Agent, Conversation, Message } from '../../entities';
 import { getSessionMessages, listProfileSessionFiles, readSessionMeta } from './sessions';
+import { normalizeForMatch } from './textCleanup';
 
 /**
  * Skip importing session files that were modified more recently than
@@ -60,9 +61,18 @@ export async function syncConversationFromHermes(
     existing.map((m) => m.externalId).filter((x): x is string => !!x)
   );
 
+  // Snapshot each unclaimed row's normalized text so we don't recompute
+  // on every iteration. Normalization strips Hermes wrapper noise on
+  // both sides so e.g. `"what do you see on this image ?"` matches a
+  // session row that Hermes saved as `"[The user attached…] … what do
+  // you see on this image ? Attached file(s):…"`.
   const claimablePool = existing
     .filter((m) => !m.externalId)
-    .map((m) => ({ msg: m, claimed: false }));
+    .map((m) => ({
+      msg: m,
+      key: normalizeForMatch(m.role, m.text),
+      claimed: false,
+    }));
 
   const added: Message[] = [];
   let claimed = 0;
@@ -70,8 +80,9 @@ export async function syncConversationFromHermes(
   for (const sm of sessionMessages) {
     if (knownExternalIds.has(sm.externalId)) continue;
 
+    const smKey = normalizeForMatch(sm.role, sm.text);
     const candidate = claimablePool.find(
-      (c) => !c.claimed && c.msg.role === sm.role && c.msg.text.trim() === sm.text.trim()
+      (c) => !c.claimed && c.msg.role === sm.role && c.key === smKey
     );
     if (candidate) {
       candidate.claimed = true;

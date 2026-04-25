@@ -72,8 +72,11 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         includeAssets: [
           'logo_128.png',
+          'logo_256.png',
+          'logo_512.png',
           'icons/apple-touch-icon.png',
           'icons/icon-192.png',
+          'icons/icon-256.png',
           'icons/icon-512.png',
           'icons/icon-512-maskable.png',
         ],
@@ -91,6 +94,12 @@ export default defineConfig(({ mode }) => {
             {
               src: '/icons/icon-192.png',
               sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/icons/icon-256.png',
+              sizes: '256x256',
               type: 'image/png',
               purpose: 'any',
             },
