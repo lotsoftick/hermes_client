@@ -15,6 +15,8 @@ import { Close, Refresh } from '@mui/icons-material';
 import TerminalView, { type TerminalColors, type TerminalStatus } from './TerminalView';
 import type { HermesSubcommand } from './SetupTerminal';
 import { SETUP_ACTIONS, type SetupAction } from './setupActions';
+import { useAppDispatch } from '../../../../app/store/hooks';
+import { agentsApi } from '../../../../entities/agent/api';
 
 interface AgentConfigDrawerProps {
   open: boolean;
@@ -49,6 +51,7 @@ export default function AgentConfigDrawer({
 }: AgentConfigDrawerProps) {
   const theme = useTheme();
   const { sidebar } = theme.palette;
+  const dispatch = useAppDispatch();
   const [cmd, setCmd] = useState<HermesSubcommand>(initialCmd);
   const [status, setStatus] = useState<TerminalStatus>('connecting');
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -80,13 +83,25 @@ export default function AgentConfigDrawer({
     if (code !== null) setExitCode(code);
   }, []);
 
+  // Wrap parent's onClose to also invalidate the cached agent list. The
+  // setup commands here (`model`, `auth`, `login`, `cron`, …) all mutate
+  // Hermes-side profile state that the API decorates onto each Agent
+  // record — most visibly the `model` field, which drives the provider
+  // icon in the sidebar. Refetching here means the icon updates the
+  // moment the drawer closes, whether the close was triggered by a
+  // successful auto-close or a manual click on the X / backdrop.
+  const handleClose = useCallback(() => {
+    dispatch(agentsApi.util.invalidateTags(['Agent']));
+    onClose();
+  }, [dispatch, onClose]);
+
   // Auto-close the drawer when the underlying command finished successfully.
   // Errors keep the drawer open so the user can read what went wrong.
   useEffect(() => {
     if (status !== 'closed' || exitCode !== 0) return undefined;
-    const id = window.setTimeout(onClose, 900);
+    const id = window.setTimeout(handleClose, 900);
     return () => window.clearTimeout(id);
-  }, [status, exitCode, onClose]);
+  }, [status, exitCode, handleClose]);
 
   const displayName = agentName || profile;
   const chip = STATUS_CHIP[status];
@@ -110,7 +125,7 @@ export default function AgentConfigDrawer({
     <Drawer
       anchor="left"
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       ModalProps={{ keepMounted: false }}
       PaperProps={{
         sx: {
@@ -159,7 +174,7 @@ export default function AgentConfigDrawer({
             </IconButton>
           </span>
         </Tooltip>
-        <IconButton size="small" onClick={onClose} sx={{ color: sidebar.text }}>
+        <IconButton size="small" onClick={handleClose} sx={{ color: sidebar.text }}>
           <Close fontSize="small" />
         </IconButton>
       </Stack>
