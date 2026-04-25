@@ -72,6 +72,7 @@ export const baseApi = createApi({
     'Message',
     'SessionSettings',
     'Cron',
+    'CronGateway',
     'Plugin',
     'Skill',
   ],
