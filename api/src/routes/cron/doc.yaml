@@ -1,0 +1,182 @@
+paths:
+  /cron:
+    get:
+      tags:
+        - cron
+      security:
+        - bearerAuth: []
+      operationId: listCronJobs
+      summary: List all cron jobs
+      description: Returns all cron jobs including disabled ones.
+      responses:
+        200:
+          description: Cron jobs list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/cronListResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    post:
+      tags:
+        - cron
+      security:
+        - bearerAuth: []
+      operationId: addCronJob
+      summary: Add a cron job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/addCronBody'
+      responses:
+        200:
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/okResult'
+        400:
+          description: Invalid request
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /cron/{id}:
+    delete:
+      tags:
+        - cron
+      security:
+        - bearerAuth: []
+      operationId: removeCronJob
+      summary: Remove a cron job
+      parameters:
+        - $ref: '#/components/parameters/cronId'
+      responses:
+        200:
+          description: Job removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/okResult'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    post:
+      tags:
+        - cron
+      security:
+        - bearerAuth: []
+      operationId: toggleCronJob
+      summary: Enable or disable a cron job
+      parameters:
+        - $ref: '#/components/parameters/cronId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - enable
+              properties:
+                enable:
+                  type: boolean
+      responses:
+        200:
+          description: Job toggled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/okResult'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  ##
+  parameters:
+    cronId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+      description: Cron job UUID
+  ##
+  schemas:
+    #
+    cronListResponse:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/cronJob'
+        total:
+          type: integer
+    #
+    cronJob:
+      type: object
+      properties:
+        id:
+          type: string
+        profile:
+          type: string
+          nullable: true
+        name:
+          type: string
+        enabled:
+          type: boolean
+        prompt:
+          type: string
+        schedule:
+          type: object
+          properties:
+            kind:
+              type: string
+              enum: [cron, every, at]
+            at:
+              type: string
+            cron:
+              type: string
+            every:
+              type: string
+    #
+    addCronBody:
+      type: object
+      properties:
+        name:
+          type: string
+        message:
+          type: string
+        cron:
+          type: string
+          description: Cron expression (5-field)
+        every:
+          type: string
+          description: Duration (e.g. 10m, 1h)
+        at:
+          type: string
+          description: ISO datetime for one-shot
+        profile:
+          type: string
+          description: Hermes profile to bind the job to (omit for default)
+        tz:
+          type: string
+    #
+    okResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        error:
+          type: string
+          nullable: true

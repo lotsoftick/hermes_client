@@ -1,0 +1,21 @@
+{
+  "name": "hermes-client",
+  "version": "0.1.0",
+  "description": "Web-based chat interface for the Hermes AI agent (NousResearch)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "dev": "node scripts/dev.js",
+    "start": "node scripts/start.js",
+    "stop": "node scripts/stop.js"
+  },
+  "bin": {
+    "hermes-client": "scripts/cli.mjs",
+    "hermes_client": "scripts/cli.mjs"
+  },
+  "devDependencies": {
+    "vite-plugin-pwa": "^1.2.0",
+    "workbox-window": "^7.4.0"
+  }
+}

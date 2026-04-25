@@ -1,0 +1,119 @@
+paths:
+  /plugin:
+    get:
+      tags:
+        - plugin
+      security:
+        - bearerAuth: []
+      operationId: listPlugins
+      summary: List all plugins
+      description: >
+        Mirrors `hermes plugins list` — every installed plugin (enabled and
+        disabled) with its status, version, description, and source.
+      responses:
+        200:
+          description: Array of plugins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/pluginInfo'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /plugin/{id}:
+    post:
+      tags:
+        - plugin
+      security:
+        - bearerAuth: []
+      operationId: togglePlugin
+      summary: Enable or disable a plugin
+      parameters:
+        - $ref: '#/components/parameters/pluginId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/togglePluginBody'
+      responses:
+        200:
+          description: Toggle result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/togglePluginResult'
+        400:
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: 'enable (boolean) is required'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  ##
+  parameters:
+    pluginId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+      description: Plugin identifier
+  ##
+  schemas:
+    #
+    pluginInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'disk-cleanup'
+        description:
+          type: string
+          example: 'Auto-track and clean up ephemeral files'
+        version:
+          type: string
+          example: '2.0.0'
+        status:
+          type: string
+          example: 'enabled'
+        source:
+          type: string
+          example: 'bundled'
+        enabled:
+          type: boolean
+          example: true
+    #
+    togglePluginBody:
+      type: object
+      required:
+        - enable
+      properties:
+        enable:
+          type: boolean
+          description: Set to true to enable the plugin, false to disable it
+    #
+    togglePluginResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        error:
+          type: string
+          nullable: true
+          description: Present only when ok is false

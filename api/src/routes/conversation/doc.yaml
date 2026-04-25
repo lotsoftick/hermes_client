@@ -1,0 +1,181 @@
+paths:
+  /conversation:
+    get:
+      tags:
+        - conversation
+      security:
+        - bearerAuth: []
+      operationId: listAllConversations
+      summary: List all conversations
+      responses:
+        200:
+          description: List of all conversations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/conversationListResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    post:
+      tags:
+        - conversation
+      security:
+        - bearerAuth: []
+      operationId: createConversation
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/conversationReqBody'
+      responses:
+        200:
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/conversation'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+  /conversation/agent/{agentId}:
+    get:
+      tags:
+        - conversation
+      security:
+        - bearerAuth: []
+      operationId: listConversationsByAgent
+      summary: List all conversations for an agent
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/conversationListResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /conversation/{id}:
+    patch:
+      tags:
+        - conversation
+      security:
+        - bearerAuth: []
+      operationId: updateConversation
+      summary: Rename a conversation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/conversationUpdateBody'
+      responses:
+        200:
+          description: Updated conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/conversation'
+        404:
+          description: Conversation not found
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - conversation
+      security:
+        - bearerAuth: []
+      operationId: deleteConversation
+      summary: Soft-delete a conversation and its messages
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          $ref: '#/components/responses/empty'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  ##
+  schemas:
+    #
+    conversation:
+      type: object
+      properties:
+        _id:
+          type: integer
+        agentId:
+          type: integer
+        title:
+          type: string
+          nullable: true
+        sessionKey:
+          type: string
+          nullable: true
+          description: Hermes session identifier
+        createdBy:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    #
+    conversationListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/conversation'
+    #
+    conversationReqBody:
+      type: object
+      required:
+        - agentId
+      properties:
+        agentId:
+          type: integer
+          description: The agent this conversation belongs to.
+    #
+    conversationUpdateBody:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          example: 'Trip to Japan'
+          description: Custom title for the conversation.

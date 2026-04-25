@@ -1,0 +1,298 @@
+paths:
+  /agent:
+    get:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: listAgents
+      summary: List all agents (one per Hermes profile)
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 0
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            enum: [5, 10, 20, 40, 60, 100]
+            default: 40
+        - in: query
+          name: sortField
+          schema:
+            type: string
+            enum: [name, createdAt, updatedAt]
+            default: createdAt
+        - in: query
+          name: sortType
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        200:
+          description: Paginated list of agents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/agentListResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    post:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: createAgent
+      summary: Create a new agent (provisions a new Hermes profile)
+      description: |
+        Calls `hermes profile create` for the supplied name (or a slugified
+        version of it) and stores a matching row in the local database.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/agentReqBody'
+      responses:
+        200:
+          description: Created agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/agent'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+  /agent/sync:
+    post:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: syncAgents
+      summary: Import any Hermes profiles not yet known to the client
+      responses:
+        200:
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  syncedAgents:
+                    type: integer
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /agent/{id}:
+    get:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: getAgent
+      summary: Get an agent by ID
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        200:
+          description: Agent object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/agent'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    patch:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: updateAgent
+      summary: Update an agent's display name
+      parameters:
+        - $ref: '#/components/parameters/id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/agentUpdateBody'
+      responses:
+        200:
+          description: Updated agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/agent'
+        404:
+          description: Agent not found
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: deleteAgent
+      summary: Soft-delete an agent (also removes the Hermes profile)
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        200:
+          $ref: '#/components/responses/empty'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /agent/{id}/conversation/{conversationId}/session-settings:
+    get:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: getSessionSettings
+      summary: Get session settings for a conversation
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/conversationId'
+      responses:
+        200:
+          description: Session settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  settings:
+                    type: object
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+    patch:
+      tags:
+        - agent
+      security:
+        - bearerAuth: []
+      operationId: patchSessionSettings
+      summary: Rename a conversation (also renames the underlying Hermes session)
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/conversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  nullable: true
+      responses:
+        200:
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  parameters:
+    id:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: integer
+    conversationId:
+      in: path
+      name: conversationId
+      required: true
+      schema:
+        type: integer
+  schemas:
+    agent:
+      type: object
+      properties:
+        _id:
+          type: integer
+        name:
+          type: string
+        hermesProfile:
+          type: string
+        createdBy:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        model:
+          type: string
+          nullable: true
+          description: Currently selected default model on the bound Hermes profile.
+        exists:
+          type: boolean
+          description: Whether the Hermes profile directory still exists on disk.
+    agentListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/agent'
+    agentReqBody:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: 'Research Assistant'
+        hermesProfile:
+          type: string
+          example: 'research-assistant'
+          description: |
+            Optional explicit profile name. Auto-generated by slugifying
+            `name` if omitted. Must be lowercase alphanumeric (with - or _).
+    agentUpdateBody:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: 'Updated Agent Name'

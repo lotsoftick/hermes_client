@@ -1,0 +1,50 @@
+paths:
+  /skill:
+    get:
+      tags:
+        - skill
+      security:
+        - bearerAuth: []
+      operationId: listSkills
+      summary: List all available skills
+      description: >
+        Mirrors `hermes skills list --source all` with each skill's name,
+        description, source bucket (hub / builtin / local), version (when
+        known), and enabled state.
+      responses:
+        200:
+          description: Array of skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/skillInfo'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  ##
+  schemas:
+    #
+    skillInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 'github'
+        description:
+          type: string
+          example: 'GitHub operations via gh CLI'
+        source:
+          type: string
+          enum: [hub, builtin, local, unknown]
+        version:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean

@@ -1,0 +1,294 @@
+paths: 
+  /user:
+    get:
+      tags:
+        - user 
+      security:
+        - bearerAuth: []
+      operationId: getUsers
+      summary: List all users
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Search by name, lastName, or email
+          schema:
+            type: string
+        - name: page
+          in: query 
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [5, 10, 20, 40, 60, 100]
+            default: 40
+        - name: sortField
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [name, email, createdAt, updatedAt]
+            default: createdAt
+        - name: sortType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses: 
+        200:
+          $ref: '#/components/responses/users'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+    post:
+      tags:
+        - user
+      security:
+        - bearerAuth: []
+      operationId: createUser
+      summary: Create a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/createUserReqBody'
+      responses:
+        200:
+          $ref: '#/components/responses/user'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+
+  /user/{id}:
+    get: 
+      tags:
+        - user
+      security:
+        - bearerAuth: []
+      operationId: getUser
+      summary: Get user by id
+      parameters:
+        - name: id
+          in: path
+          description: User ID
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          $ref: '#/components/responses/user'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+    put: 
+      tags:
+        - user
+      security:
+        - bearerAuth: []
+      operationId: updateUser
+      summary: Update user by id
+      parameters:
+        - name: id
+          in: path
+          description: User ID
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/updateUserReqBody'
+      responses: 
+        200:
+          $ref: '#/components/responses/user'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+    delete:
+      tags:
+        - user
+      security:
+        - bearerAuth: []
+      operationId: deleteUser
+      summary: Delete user by id (soft delete)
+      parameters:
+        - name: id
+          in: path
+          description: User ID
+          required: true
+          schema:
+            type: integer
+      responses: 
+        200:
+          $ref: '#/components/responses/empty'
+        400:
+          description: Cannot delete your own account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+
+components:
+  responses:
+    users:
+      description: Successful response with paginated users list
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              total:
+                type: integer
+                description: Total number of users matching the query
+              items:
+                type: array
+                items:
+                  $ref: '#/components/schemas/user'
+    user:
+      description: Successful response with user data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/user'
+
+  schemas:
+    user:
+      type: object
+      additionalProperties: false
+      required:
+        - _id
+        - name
+        - lastName
+        - email
+        - active
+        - createdAt
+      properties:
+        _id:
+          type: integer
+          description: User ID
+        name:
+          type: string
+          description: User's first name
+        lastName:
+          type: string
+          description: User's last name
+        email:
+          type: string
+          format: email
+          description: User's email address
+        phone:
+          type: string
+          nullable: true
+          description: User's phone number
+        active:
+          type: boolean
+          description: Whether the user account is active
+        createdAt:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last update timestamp
+
+    createUserReqBody:
+      type: object
+      required:
+        - name
+        - lastName
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: 'John'
+          description: User's first name
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: 'Doe'
+          description: User's last name
+        email:
+          type: string
+          format: email
+          example: 'john.doe@example.com'
+          description: User's email address (must be unique)
+        password:
+          type: string
+          minLength: 6
+          example: 'password123'
+          description: User's password (min 6 characters)
+        phone:
+          type: string
+          example: '+1234567890'
+          description: User's phone number (optional)
+
+    updateUserReqBody:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: 'John'
+          description: User's first name
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: 'Doe'
+          description: User's last name
+        email:
+          type: string
+          format: email
+          example: 'john.doe@example.com'
+          description: User's email address (must be unique)
+        password:
+          type: string
+          minLength: 6
+          example: 'newpassword123'
+          description: User's new password (min 6 characters)
+        phone:
+          type: string
+          example: '+1234567890'
+          description: User's phone number
+        active:
+          type: boolean
+          example: true
+          description: Whether the user account is active

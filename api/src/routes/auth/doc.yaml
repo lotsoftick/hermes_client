@@ -1,0 +1,134 @@
+paths:
+  /auth/token:
+    get:
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      operationId: tokenCheck
+      summary: Check token and return signed in user
+      responses:
+        200:
+          $ref: '#/components/responses/profile'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+  /auth/login:
+    post:
+      tags:
+        - auth
+      operationId: login
+      summary: Login request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/loginReqBody'
+      responses:
+        200:
+          $ref: '#/components/responses/loginRes'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+  /auth/logout:
+    delete:
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      operationId: logout
+      summary: Logout a user
+      responses:
+        200:
+          $ref: '#/components/responses/empty'
+        500:
+          $ref: '#/components/responses/500'
+        401:
+          $ref: '#/components/responses/401'
+#
+#
+#
+components:
+  ##
+  responses:
+    #
+    profile:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/profile'
+    #
+    loginRes:
+      description: Successful login
+      headers:
+        access-token:
+          required: true
+          schema:
+            type: string
+          description: JWT access token
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/profile'
+              - type: object
+                required:
+                  - accessToken
+                properties:
+                  accessToken:
+                    type: string
+                    description: JWT access token (same value as the access-token header)
+  ##
+  schemas:
+    #
+    profile:
+      type: object
+      required:
+        - _id
+        - email
+        - name
+        - active
+        - createdAt
+      properties:
+        _id:
+          type: integer
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        lastName:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    #
+    loginReqBody:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          example: 'test@test.com'
+        password:
+          type: string
+          example: '123456'

@@ -1,0 +1,43 @@
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    #
+    error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+  ##
+  responses:
+    empty:
+      description: successful empty response
+      content:
+        application/json: {}
+    500:
+      description: internal error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/error'
+    401:
+      description: auth failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/error'
+    422:
+      description: validation error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              fieldName:
+                type: array
+                items:
+                  type: string

@@ -1,0 +1,274 @@
+paths:
+  /message/conversation/{conversationId}:
+    get:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: listMessagesByConversation
+      summary: List messages in a conversation (cursor-paginated)
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: limit
+          required: false
+          description: Number of messages to return (1-200)
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: before
+          required: false
+          description: ISO 8601 cursor — only return messages created before this timestamp
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: Paginated messages (newest last)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/messageListResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /message:
+    post:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: createMessage
+      summary: Create a standalone message (no AI response)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/messageReqBody'
+      responses:
+        200:
+          description: Created message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/message'
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+  /message/chat:
+    post:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: chat
+      summary: Send a message and stream the AI response via SSE
+      description: >
+        Saves the user message, spawns `hermes chat -Q -q "<msg>"` for the
+        conversation's bound profile, and streams stdout back as
+        Server-Sent Events. The assistant message is persisted and the
+        conversation is bound to the resolved Hermes session id once the
+        stream completes (so subsequent turns can `--resume`).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/chatReqBody'
+      responses:
+        200:
+          description: SSE stream of AI response deltas
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  Each event is `data: {json}\n\n` where json has
+                  `{ type: "response.output_text.delta" | "response.thinking.delta", delta: string }`.
+                  Stream ends with `data: [DONE]\n\n`.
+        404:
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        401:
+          $ref: '#/components/responses/401'
+        422:
+          $ref: '#/components/responses/422'
+        500:
+          $ref: '#/components/responses/500'
+  /message/conversation/{conversationId}/poll:
+    get:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: pollMessages
+      summary: Poll for new messages persisted after a timestamp
+      description: >
+        Returns messages saved to the local store after `after`. Intended
+        for low-frequency client polling (e.g. every 5s) while a user is
+        viewing a conversation but not actively streaming a response.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: after
+          required: false
+          description: ISO 8601 timestamp — only return messages created after this time
+          schema:
+            type: string
+            format: date-time
+      responses:
+        200:
+          description: New messages and sync count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pollResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /message/{id}:
+    delete:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: deleteMessage
+      summary: Soft-delete a message
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          $ref: '#/components/responses/empty'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+#
+#
+#
+components:
+  ##
+  schemas:
+    #
+    messageFile:
+      type: object
+      properties:
+        filename:
+          type: string
+        originalName:
+          type: string
+        mimetype:
+          type: string
+        size:
+          type: integer
+        url:
+          type: string
+    #
+    message:
+      type: object
+      properties:
+        _id:
+          type: integer
+        conversationId:
+          type: integer
+        externalId:
+          type: string
+          nullable: true
+        text:
+          type: string
+        thinking:
+          type: string
+          nullable: true
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/messageFile'
+        role:
+          type: string
+          enum: [user, assistant]
+        createdBy:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    #
+    messageListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Number of messages in the current page
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/message'
+        hasMore:
+          type: boolean
+          description: Whether older messages exist before this page
+    #
+    messageReqBody:
+      type: object
+      required:
+        - conversationId
+        - text
+      properties:
+        conversationId:
+          type: integer
+        text:
+          type: string
+    #
+    pollResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/message'
+        synced:
+          type: integer
+          description: Number of new messages imported from the JSONL session file
+    #
+    chatReqBody:
+      type: object
+      required:
+        - conversationId
+      properties:
+        conversationId:
+          type: integer
+          description: The conversation to send the message in.
+        text:
+          type: string
+          description: The message text. At least one of text or files is required.
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+          description: Up to 5 file attachments (max 500MB each).

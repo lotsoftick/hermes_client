@@ -1,0 +1,118 @@
+paths:
+  /update/status:
+    get:
+      tags:
+        - update
+      operationId: updateStatus
+      summary: Get cached update status
+      description: >
+        Returns the last-known update status without contacting the remote
+        repository. The status is refreshed automatically every 2 hours and
+        on-demand via POST /update/check.
+      responses:
+        200:
+          description: Current update status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/updateStatus'
+        500:
+          $ref: '#/components/responses/500'
+  /update/check:
+    post:
+      tags:
+        - update
+      security:
+        - bearerAuth: []
+      operationId: checkForUpdate
+      summary: Check for a new version
+      description: >
+        Fetches the latest version from the remote repository and compares it
+        with the locally installed version.
+      responses:
+        200:
+          description: Fresh update status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/updateStatus'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /update/apply:
+    post:
+      tags:
+        - update
+      security:
+        - bearerAuth: []
+      operationId: applyUpdate
+      summary: Pull latest version and restart the service
+      description: >
+        Clones or fast-forwards the update source repository, then spawns the
+        start script in a detached process. Returns 409 if an update is already
+        in progress.
+      responses:
+        200:
+          description: Update started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/applyUpdateSuccess'
+        409:
+          description: Update already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/applyUpdateError'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          description: Update failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/applyUpdateError'
+#
+#
+#
+components:
+  ##
+  schemas:
+    #
+    updateStatus:
+      type: object
+      properties:
+        available:
+          type: boolean
+          description: Whether a newer version is available
+        current:
+          type: string
+          example: '1.0.0'
+          description: Currently installed version
+        latest:
+          type: string
+          example: '1.1.0'
+          description: Latest version on the remote repository
+        checkedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp of the last check (null if never checked)
+    #
+    applyUpdateSuccess:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+    #
+    applyUpdateError:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: 'Update already in progress'
