@@ -5,7 +5,8 @@ declare global {
     interface ProcessEnv {
       NODE_ENV: 'test' | 'development' | 'production';
       JWT_SECRET: string;
-      ALLOWED_DOMAIN: string;
+      ALLOWED_DOMAIN?: string;
+      HERMES_STRICT_CORS?: string;
     }
   }
 }

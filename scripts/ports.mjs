@@ -64,9 +64,30 @@ export function readPorts() {
 }
 
 /**
- * Derived env vars expected by API and Client code.
- * Use these when spawning child processes so a single user-level .env is
- * the source of truth.
+ * Derived env vars for spawning child processes.
+ *
+ * Note we deliberately do NOT export `ALLOWED_DOMAIN`, `API_PUBLIC_URL`,
+ * or `VITE_API_BASE_URL` here, even though the API and client both read
+ * those vars. Pinning them to `http://localhost:${port}` would block
+ * legitimate access from other devices on the user's LAN / Tailscale —
+ * the very deployment pattern this app is designed for. Instead:
+ *
+ *   - `ALLOWED_DOMAIN` is unset by default; the API ships a permissive
+ *     CORS policy and a `HERMES_STRICT_CORS=1` opt-in for the strict
+ *     allowlist behaviour.
+ *   - `API_PUBLIC_URL` is derived per-request from the `Host` header
+ *     (with `x-forwarded-*` honoured) — see `routes/message/controller`.
+ *   - `VITE_API_BASE_URL` is left empty so the bundle isn't built with
+ *     a baked-in `http://localhost:...` URL; the client derives the
+ *     API origin at runtime from `__HERMES_CONFIG__` or
+ *     `window.location` — see `client/src/shared/api/baseApi`.
+ *
+ * Users who want strict mode can still set any of those keys in
+ * `~/.hermes_client/.env` or `api/.env`; nothing here overwrites them.
+ *
+ * `VITE_API_PORT` is exported so the build can embed a sensible default
+ * for the runtime URL derivation when the user installs across a
+ * non-standard port.
  */
 export function portEnv() {
   const { apiPort, clientPort } = readPorts();
@@ -74,8 +95,6 @@ export function portEnv() {
     API_PORT: String(apiPort),
     CLIENT_PORT: String(clientPort),
     PORT: String(apiPort),
-    ALLOWED_DOMAIN: `http://localhost:${clientPort}`,
-    API_PUBLIC_URL: `http://localhost:${apiPort}`,
-    VITE_API_BASE_URL: `http://localhost:${apiPort}/api`,
+    VITE_API_PORT: String(apiPort),
   };
 }

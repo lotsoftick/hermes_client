@@ -120,13 +120,24 @@ Generated automatically on first run (see `api/.env.example` for reference):
 | `JWT_SECRET`                | _(random)_                 | Secret for JWT signing (also authenticates `/ws/pty` upgrades) |
 | `DB_PATH`                   | `./data/hermes.sqlite`     | Path to SQLite database file                                   |
 | `PORT`                      | _(API_PORT)_               | API listen port (driven by `~/.hermes_client/.env`)            |
-| `ALLOWED_DOMAIN`            | _(CLIENT origin)_          | CORS allowed origin(s), comma-separated                        |
-| `API_PUBLIC_URL`            | _(API origin)_             | Public base URL used for generated upload URLs                 |
+| `ALLOWED_DOMAIN`            | _(unset — allow all)_      | CORS allowlist, comma-separated; only enforced when `HERMES_STRICT_CORS=1` |
+| `HERMES_STRICT_CORS`        | _(off)_                    | Set to `1` to reject any origin not in `ALLOWED_DOMAIN`        |
+| `API_PUBLIC_URL`            | _(derived from request)_   | Optional fallback origin for upload URLs when no `Host` header |
 | `HERMES_BIN`                | resolved automatically     | Override the absolute path to the `hermes` CLI binary          |
 | `HERMES_HOME`               | `~/.hermes`                | Override Hermes home directory                                 |
 | `HERMES_CLIENT_UPLOADS_DIR` | `~/.hermes_client/uploads` | Override where uploaded files are stored on disk               |
 
-The client reads `VITE_API_BASE_URL` at build time; it is set automatically to match `API_PORT`. Override by setting it in `client/.env` only if you deploy behind a custom host.
+> **CORS / remote access.** Hermes Client is a single-user local app. By
+> default the API allows every origin and the client derives the API URL
+> from `window.location`, so the same install works on `localhost`, on a
+> LAN IP, and over Tailscale without any extra configuration. To lock it
+> down to a fixed allowlist, set `ALLOWED_DOMAIN` and `HERMES_STRICT_CORS=1`
+> in `api/.env` (or `~/.hermes_client/api/.env` for production installs).
+
+The client picks its API origin at runtime: `__HERMES_CONFIG__.apiBaseUrl`
+(injected by the production static server from the request host) ▸
+`VITE_API_BASE_URL` (build-time override) ▸ derived from
+`window.location` + `VITE_API_PORT`.
 
 To regenerate secrets, delete `api/.env` and run `npm run dev` or `npm run setup` again.
 

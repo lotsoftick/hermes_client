@@ -152,29 +152,35 @@ export function deploy() {
   const canonicalDbPath = path.join(dataDir, 'hermes.sqlite');
 
   const envDist = path.join(apiDist, '.env');
-  const allowedDomain = `http://localhost:${clientPort}`;
-  const apiPublicUrl = `http://localhost:${apiPort}`;
+
+  // We seed only what the runtime can't figure out on its own.
+  //   - DB_PATH and PORT must match where the install actually lives.
+  //   - JWT_SECRET must persist across reinstalls or every login token
+  //     gets invalidated, so we generate it once.
+  //   - ALLOWED_DOMAIN / API_PUBLIC_URL are deliberately omitted: the
+  //     API has a permissive CORS default and derives public URLs from
+  //     the request host. Users who want strict CORS set
+  //     `ALLOWED_DOMAIN=...` and `HERMES_STRICT_CORS=1` themselves.
+  const seedDefaults = {
+    NODE_ENV: 'production',
+    JWT_SECRET: crypto.randomBytes(32).toString('hex'),
+    DB_PATH: canonicalDbPath,
+    PORT: String(apiPort),
+  };
+  const overrides = {
+    DB_PATH: canonicalDbPath,
+    PORT: String(apiPort),
+  };
 
   if (!existsSync(envDist)) {
     writeFileSync(
       envDist,
-      [
-        'NODE_ENV=production',
-        `JWT_SECRET=${crypto.randomBytes(32).toString('hex')}`,
-        `DB_PATH=${canonicalDbPath}`,
-        `PORT=${apiPort}`,
-        `ALLOWED_DOMAIN=${allowedDomain}`,
-        `API_PUBLIC_URL=${apiPublicUrl}`,
-        '',
-      ].join('\n')
+      Object.entries(seedDefaults)
+        .map(([k, v]) => `${k}=${v}`)
+        .concat('')
+        .join('\n')
     );
   } else {
-    const overrides = {
-      DB_PATH: canonicalDbPath,
-      PORT: String(apiPort),
-      ALLOWED_DOMAIN: allowedDomain,
-      API_PUBLIC_URL: apiPublicUrl,
-    };
     const seen = new Set();
     const lines = readFileSync(envDist, 'utf-8').split('\n');
     const updated = lines.map((line) => {

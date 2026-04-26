@@ -24,8 +24,11 @@ fs.writeFileSync(
     `JWT_SECRET=${JWT_SECRET}`,
     `DB_PATH=./data/hermes.sqlite`,
     `PORT=${apiPort}`,
-    `ALLOWED_DOMAIN=http://localhost:${clientPort}`,
-    `API_PUBLIC_URL=http://localhost:${apiPort}`,
+    `# CORS: by default the API allows every origin (single-user local app).`,
+    `# To lock it down, set ALLOWED_DOMAIN to a comma-separated allowlist`,
+    `# and uncomment HERMES_STRICT_CORS=1 below.`,
+    `# ALLOWED_DOMAIN=http://localhost:${clientPort}`,
+    `# HERMES_STRICT_CORS=1`,
     '',
   ].join('\n'),
 );

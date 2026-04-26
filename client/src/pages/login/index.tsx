@@ -3,6 +3,37 @@ import { Button, TextField, Card, Typography, Box, CircularProgress, Alert } fro
 import { useFormik, FormikProvider, Form } from 'formik';
 import { useNavigate } from 'react-router';
 import { useLoginMutation } from '../../features/auth';
+import { API_BASE_URL } from '../../shared/api/baseApi';
+
+/**
+ * Translate an RTK Query error into a message that actually helps the
+ * user. Previously we collapsed every error to "Login failed. Please
+ * check your credentials." which made network/CORS failures look like
+ * bad passwords — sent us on a goose chase the first time the app was
+ * accessed over Tailscale.
+ */
+function describeLoginError(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'Login failed. Please try again.';
+  const e = error as { status?: number | string; data?: unknown; error?: string };
+  if (e.status === 401) return 'Login failed. Please check your credentials.';
+  if (e.status === 'FETCH_ERROR') {
+    return `Could not reach the API at ${API_BASE_URL}. ` +
+      'If you opened this page from another device, make sure the API ' +
+      'is reachable on the same hostname (and that any firewall / ' +
+      'reverse proxy forwards both the client and API ports).';
+  }
+  if (e.status === 'PARSING_ERROR') {
+    return 'API responded with something that is not JSON. The server may have crashed mid-request — check the API logs.';
+  }
+  if (typeof e.status === 'number' && e.status >= 500) {
+    return `Server error (${e.status}). Check the API logs.`;
+  }
+  if (e.data && typeof e.data === 'object' && 'message' in e.data && typeof (e.data as { message: unknown }).message === 'string') {
+    return (e.data as { message: string }).message;
+  }
+  if (typeof e.error === 'string') return e.error;
+  return 'Login failed. Please try again.';
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -53,7 +84,7 @@ export default function LoginPage() {
             <Form>
               {error && (
                 <Alert severity="error" sx={{ marginBottom: 2 }}>
-                  Login failed. Please check your credentials.
+                  {describeLoginError(error)}
                 </Alert>
               )}
               <TextField

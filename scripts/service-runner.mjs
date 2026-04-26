@@ -35,14 +35,18 @@ function parseEnvFile(file) {
 const userEnv = parseEnvFile(USER_ENV);
 const apiPort = Number(userEnv.API_PORT) || 18889;
 const clientPort = Number(userEnv.CLIENT_PORT) || 18888;
+// We deliberately do NOT force `ALLOWED_DOMAIN` here. Pinning it to
+// `http://localhost:${clientPort}` would block legitimate access from
+// the user's other devices over Tailscale / LAN. The API ships a
+// permissive CORS default; users who want a strict allowlist set
+// ALLOWED_DOMAIN + HERMES_STRICT_CORS=1 in ~/.hermes_client/.env or
+// api/.env and they win.
 const childEnv = {
   ...process.env,
   NODE_ENV: 'production',
   API_PORT: String(apiPort),
   CLIENT_PORT: String(clientPort),
   PORT: String(apiPort),
-  ALLOWED_DOMAIN: `http://localhost:${clientPort}`,
-  API_PUBLIC_URL: `http://localhost:${apiPort}`,
 };
 
 const children = [];

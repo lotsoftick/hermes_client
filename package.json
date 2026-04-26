@@ -1,6 +1,6 @@
 {
   "name": "hermes-client",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Web-based chat interface for the Hermes AI agent (NousResearch)",
   "private": true,
   "type": "module",
