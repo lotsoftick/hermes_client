@@ -12,6 +12,10 @@ export type AgentResponse = {
   model?: string | null;
   /** Whether the profile directory still exists in `~/.hermes`. */
   exists?: boolean;
+  /** Advisory spend caps in USD; `null` means no cap. */
+  dailyCapUsd: number | null;
+  monthlyCapUsd: number | null;
+  allTimeCapUsd: number | null;
 } | null;
 
 export type AgentJson = NonNullable<AgentResponse>;
@@ -21,6 +25,10 @@ export type AgentFilters = QueryFilters<'name' | 'createdAt' | 'updatedAt'>;
 export type AgentRequestBody = {
   name?: string;
   hermesProfile?: string;
+  /** Pass an explicit `null` to clear a cap, or omit to leave it unchanged. */
+  dailyCapUsd?: number | null;
+  monthlyCapUsd?: number | null;
+  allTimeCapUsd?: number | null;
 };
 
 export type List = RequestHandler<never, APIResponse<AgentResponse>, never, AgentFilters>;

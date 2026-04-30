@@ -124,7 +124,17 @@ paths:
       security:
         - bearerAuth: []
       operationId: updateAgent
-      summary: Update an agent's display name
+      summary: Update an agent's display name and/or advisory spend caps
+      description: |
+        All body fields are optional and applied independently:
+          * `name` renames the agent in the local DB.
+          * `dailyCapUsd`, `monthlyCapUsd`, `allTimeCapUsd` are advisory
+            USD spend caps. Pass a positive number to set a cap, `null`
+            (or `0` / empty string) to clear it, or omit the field
+            entirely to leave it unchanged.
+
+        These caps are *informational only* — the client never blocks
+        the agent or throttles requests once a cap is reached.
       parameters:
         - $ref: '#/components/parameters/id'
       requestBody:
@@ -265,6 +275,30 @@ components:
         exists:
           type: boolean
           description: Whether the Hermes profile directory still exists on disk.
+        dailyCapUsd:
+          type: number
+          format: float
+          nullable: true
+          description: |
+            Advisory daily USD spend cap. Resets at local midnight.
+            `null` means no cap. Informational only — never enforced.
+          example: 5.0
+        monthlyCapUsd:
+          type: number
+          format: float
+          nullable: true
+          description: |
+            Advisory monthly USD spend cap. Resets on the 1st of the
+            local month. `null` means no cap. Informational only.
+          example: 100.0
+        allTimeCapUsd:
+          type: number
+          format: float
+          nullable: true
+          description: |
+            Advisory lifetime USD spend cap; never resets. `null` means
+            no cap. Informational only.
+          example: null
     agentListResponse:
       type: object
       properties:
@@ -290,9 +324,29 @@ components:
             `name` if omitted. Must be lowercase alphanumeric (with - or _).
     agentUpdateBody:
       type: object
-      required:
-        - name
+      description: |
+        Every field is optional. Omitted fields are left untouched —
+        the same endpoint serves "rename agent" and "set spend caps"
+        flows independently.
       properties:
         name:
           type: string
           example: 'Updated Agent Name'
+        dailyCapUsd:
+          type: number
+          format: float
+          nullable: true
+          description: |
+            Positive number to set a cap, `null` (or `0` / empty
+            string) to clear it, omit to leave unchanged.
+          example: 5.0
+        monthlyCapUsd:
+          type: number
+          format: float
+          nullable: true
+          example: 100.0
+        allTimeCapUsd:
+          type: number
+          format: float
+          nullable: true
+          example: null

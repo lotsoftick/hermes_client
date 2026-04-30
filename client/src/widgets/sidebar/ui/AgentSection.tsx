@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Box,
   Collapse,
   List,
   ListItem,
@@ -17,13 +16,13 @@ import {
   ExpandLess,
   DeleteOutline,
   TerminalOutlined,
-  HelpOutline,
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router';
 import { useDeleteAgentMutation } from '../../../entities/agent';
 import { useCreateConversationMutation, ConversationItem } from '../../../entities/conversation';
 import { AgentConfigDrawer } from '../../../features/agent/setup';
-import { DeleteButton, ModelIcon, resolveModelIcon } from '../../../shared/ui';
+import { DeleteButton } from '../../../shared/ui';
+import AgentSpendRing from './AgentSpendRing';
 
 interface AgentSectionProps {
   agent: { _id: string; name: string; hermesProfile: string; model?: string | null };
@@ -113,50 +112,13 @@ export default function AgentSection({
             '&:hover': { bgcolor: sidebar.hover },
           }}
         >
-          {(() => {
-            const resolved = resolveModelIcon(agent.model);
-            const tooltip = agent.model
-              ? resolved
-                ? `${resolved.label} · ${agent.model}`
-                : agent.model
-              : 'No model configured yet — click to set one up';
-            return (
-              <Tooltip title={tooltip} placement="right" arrow>
-                <Box
-                  component="span"
-                  onClick={(e) => {
-                    if (!agent.model) {
-                      e.stopPropagation();
-                      setDrawerOpen(true);
-                    }
-                  }}
-                  sx={{
-                    width: 22,
-                    height: 22,
-                    flexShrink: 0,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '6px',
-                    color: agent.model ? sidebar.selectedText : sidebar.selectedBorder,
-                    border: agent.model ? 'none' : `1px dashed ${sidebar.selectedBorder}`,
-                    cursor: agent.model ? 'inherit' : 'pointer',
-                    transition: 'transform 120ms ease, opacity 120ms ease',
-                    opacity: agent.model ? 0.95 : 0.85,
-                    '&:hover': agent.model
-                      ? undefined
-                      : { opacity: 1, transform: 'scale(1.05)' },
-                  }}
-                >
-                  {resolved ? (
-                    <ModelIcon model={agent.model} size={16} />
-                  ) : (
-                    <HelpOutline sx={{ fontSize: 14 }} />
-                  )}
-                </Box>
-              </Tooltip>
-            );
-          })()}
+          <AgentSpendRing
+            agentId={agent._id}
+            hermesProfile={agent.hermesProfile}
+            model={agent.model}
+            configured={Boolean(agent.model)}
+            onClickWhenUnconfigured={() => setDrawerOpen(true)}
+          />
           <ListItemText
             primary={agent.name}
             sx={{

@@ -1,7 +1,17 @@
 import { useState } from 'react';
-import { Box, TextField, IconButton, Typography, CircularProgress, Stack } from '@mui/material';
-import { Edit, Check, TuneOutlined } from '@mui/icons-material';
+import { useNavigate } from 'react-router';
+import {
+  Box,
+  TextField,
+  IconButton,
+  Typography,
+  CircularProgress,
+  Stack,
+  Tooltip,
+} from '@mui/material';
+import { Edit, Check, TuneOutlined, SettingsOutlined } from '@mui/icons-material';
 import { useGetAgentQuery, useUpdateAgentMutation } from '../../../entities/agent';
+import AgentSpendRing from '../../sidebar/ui/AgentSpendRing';
 
 interface ChatHeaderProps {
   agentId: string;
@@ -15,6 +25,7 @@ export default function ChatHeader({
   showSessionSettings,
   onToggleSessionSettings,
 }: ChatHeaderProps) {
+  const navigate = useNavigate();
   const { data: agent } = useGetAgentQuery(agentId, { skip: !agentId });
   const [updateAgent, { isLoading: isUpdatingName }] = useUpdateAgentMutation();
   const [editing, setEditing] = useState(false);
@@ -90,6 +101,27 @@ export default function ChatHeader({
         </>
       ) : (
         <>
+          {/* Spend ring + agent name. Clicking the ring opens settings,
+              giving users a fast bridge from "I see I've spent a lot"
+              to "let me adjust the cap" without scanning the icons. */}
+          <Box
+            onClick={() => navigate(`/agent/${agent._id}/settings/usage`)}
+            sx={{
+              display: 'inline-flex',
+              cursor: 'pointer',
+              borderRadius: '50%',
+              transition: 'transform 120ms ease',
+              '&:hover': { transform: 'scale(1.05)' },
+            }}
+          >
+            <AgentSpendRing
+              agentId={agent._id}
+              hermesProfile={agent.hermesProfile}
+              model={agent.model}
+              size={36}
+              display="percentage"
+            />
+          </Box>
           <Stack sx={{ flex: 1, minWidth: 0 }} spacing={0.25}>
             <Typography
               variant="h6"
@@ -111,24 +143,38 @@ export default function ChatHeader({
               hermes profile: {agent.hermesProfile}
             </Typography>
           </Stack>
-          <IconButton
-            size="small"
-            onClick={onToggleSessionSettings}
-            aria-label="Session settings"
-            sx={{ opacity: showSessionSettings ? 1 : 0.4, '&:hover': { opacity: 1 } }}
-          >
-            <TuneOutlined sx={{ fontSize: 18 }} />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => {
-              setNameValue(agent.name);
-              setEditing(true);
-            }}
-            sx={{ opacity: 0.4, '&:hover': { opacity: 1 } }}
-          >
-            <Edit sx={{ fontSize: 16 }} />
-          </IconButton>
+          <Tooltip title="Session settings">
+            <IconButton
+              size="small"
+              onClick={onToggleSessionSettings}
+              aria-label="Session settings"
+              sx={{ opacity: showSessionSettings ? 1 : 0.4, '&:hover': { opacity: 1 } }}
+            >
+              <TuneOutlined sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Agent settings">
+            <IconButton
+              size="small"
+              onClick={() => navigate(`/agent/${agent._id}/settings/usage`)}
+              aria-label="Agent settings"
+              sx={{ opacity: 0.4, '&:hover': { opacity: 1 } }}
+            >
+              <SettingsOutlined sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Rename agent">
+            <IconButton
+              size="small"
+              onClick={() => {
+                setNameValue(agent.name);
+                setEditing(true);
+              }}
+              sx={{ opacity: 0.4, '&:hover': { opacity: 1 } }}
+            >
+              <Edit sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
         </>
       )}
     </Box>

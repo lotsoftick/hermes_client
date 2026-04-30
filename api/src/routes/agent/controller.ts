@@ -15,7 +15,31 @@ function decorate(agent: Agent, models: Record<string, string | null>): AgentJso
     updatedAt: agent.updatedAt,
     model: models[agent.hermesProfile] ?? null,
     exists: hermes.profileExists(agent.hermesProfile),
+    dailyCapUsd: agent.dailyCapUsd,
+    monthlyCapUsd: agent.monthlyCapUsd,
+    allTimeCapUsd: agent.allTimeCapUsd,
   };
+}
+
+/**
+ * Sanitise a single cap field from the request body.
+ *
+ * Accepts:
+ *   - `undefined` → "leave unchanged" (returns `undefined`)
+ *   - `null`, `''`, `'null'`, `0` → "clear the cap" (returns `null`)
+ *   - any positive finite number (or numeric string) → that number
+ *
+ * Negative numbers and unparseable strings are also coerced to `null`
+ * so the UI can be a bit lax without us writing junk into the DB.
+ */
+function sanitiseCap(raw: unknown): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '' || raw === 'null') return null;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // Cap at 6 decimals (sub-millicent precision) and a sane upper bound
+  // to prevent integer-overflow funny business in the SQLite real type.
+  return Math.min(Math.round(n * 1_000_000) / 1_000_000, 1_000_000_000);
 }
 
 const list: List = async (req, res, next) => {
@@ -93,7 +117,19 @@ const update: Update = async (req, res, next) => {
     const agentRepo = AppDataSource.getRepository(Agent);
     const id = Number(req.params.id);
 
-    await agentRepo.update(id, { name: req.body.name, updatedAt: new Date() });
+    const patch: Partial<Agent> = { updatedAt: new Date() };
+    if (req.body.name !== undefined) patch.name = req.body.name;
+
+    // Caps are optional in the body — only touched when present, so the
+    // same PATCH endpoint serves both "rename agent" and "set caps" UIs.
+    const daily = sanitiseCap(req.body.dailyCapUsd);
+    if (daily !== undefined) patch.dailyCapUsd = daily;
+    const monthly = sanitiseCap(req.body.monthlyCapUsd);
+    if (monthly !== undefined) patch.monthlyCapUsd = monthly;
+    const allTime = sanitiseCap(req.body.allTimeCapUsd);
+    if (allTime !== undefined) patch.allTimeCapUsd = allTime;
+
+    await agentRepo.update(id, patch);
     const agent = await agentRepo.findOneBy({ _id: id });
     if (!agent) return res.status(404).json(null);
     const models = hermes.getProfileModels([agent.hermesProfile]);

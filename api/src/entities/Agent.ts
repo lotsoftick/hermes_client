@@ -20,6 +20,15 @@ export default class Agent {
   @Column()
   createdBy: number;
 
+  @Column({ type: 'real', nullable: true, default: null })
+  dailyCapUsd: number | null;
+
+  @Column({ type: 'real', nullable: true, default: null })
+  monthlyCapUsd: number | null;
+
+  @Column({ type: 'real', nullable: true, default: null })
+  allTimeCapUsd: number | null;
+
   @Column({ type: 'datetime', default: () => "datetime('now')" })
   createdAt: Date;
 

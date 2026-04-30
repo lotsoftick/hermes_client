@@ -100,6 +100,8 @@ export const baseApi = createApi({
     'CronGateway',
     'Plugin',
     'Skill',
+    'Insights',
+    'AgentSpend',
   ],
   endpoints: () => ({}),
 });

@@ -5,6 +5,10 @@ import { baseApi } from '../../shared/api/baseApi';
  * `hermesProfile` is the `--profile` value passed to the Hermes CLI.
  * `model` is decorated server-side from the profile's resolved config.
  * `exists` is true if the underlying Hermes profile is still present.
+ *
+ * `dailyCapUsd`, `monthlyCapUsd`, `allTimeCapUsd` are advisory USD
+ * spend caps stored on the agent record (not in Hermes). `null`
+ * means "no cap" — the input is left empty in the UI.
  */
 export interface Agent {
   _id: string;
@@ -14,6 +18,9 @@ export interface Agent {
   updatedAt: string;
   model?: string | null;
   exists?: boolean;
+  dailyCapUsd: number | null;
+  monthlyCapUsd: number | null;
+  allTimeCapUsd: number | null;
 }
 
 export interface AgentsResponse {
@@ -39,6 +46,15 @@ export interface SessionSettingsResponse {
   settings: Partial<SessionSettings>;
 }
 
+export interface UpdateAgentBody {
+  id: string;
+  name?: string;
+  /** Pass `null` to clear, omit to leave unchanged. */
+  dailyCapUsd?: number | null;
+  monthlyCapUsd?: number | null;
+  allTimeCapUsd?: number | null;
+}
+
 export const agentsApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getAgents: build.query<AgentsResponse, void>({
@@ -47,7 +63,7 @@ export const agentsApi = baseApi.injectEndpoints({
     }),
     getAgent: build.query<Agent, string>({
       query: (id) => `/agent/${id}`,
-      providesTags: ['Agent'],
+      providesTags: (_res, _err, id) => [{ type: 'Agent', id }],
     }),
     createAgent: build.mutation<Agent, { name: string; hermesProfile?: string }>({
       query: (body) => ({
@@ -55,29 +71,39 @@ export const agentsApi = baseApi.injectEndpoints({
         method: 'POST',
         body,
       }),
-      invalidatesTags: ['Agent'],
+      invalidatesTags: ['Agent', 'AgentSpend'],
     }),
-    updateAgent: build.mutation<Agent, { id: string; name: string }>({
+    updateAgent: build.mutation<Agent, UpdateAgentBody>({
       query: ({ id, ...body }) => ({
         url: `/agent/${id}`,
         method: 'PATCH',
         body,
       }),
-      invalidatesTags: ['Agent'],
+      // Invalidate the agent itself, the global agent list, the
+      // shared spend rollup that drives the sidebar rings, and the
+      // *specific* per-agent Insights cache so the spend caps card
+      // sees the updated cap on the very next render.
+      invalidatesTags: (_res, _err, { id }) => [
+        'Agent',
+        { type: 'Agent', id },
+        'AgentSpend',
+        { type: 'AgentSpend', id },
+        { type: 'Insights' },
+      ],
     }),
     deleteAgent: build.mutation<void, string>({
       query: (id) => ({
         url: `/agent/${id}`,
         method: 'DELETE',
       }),
-      invalidatesTags: ['Agent'],
+      invalidatesTags: ['Agent', 'AgentSpend'],
     }),
     syncAgents: build.mutation<SyncAgentsResponse, void>({
       query: () => ({
         url: '/agent/sync',
         method: 'POST',
       }),
-      invalidatesTags: ['Agent'],
+      invalidatesTags: ['Agent', 'AgentSpend'],
     }),
     getSessionSettings: build.query<
       SessionSettingsResponse,

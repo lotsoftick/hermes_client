@@ -6,6 +6,7 @@ const Login = lazy(() => import('../pages/login'));
 const PrivateRoute = lazy(() => import('../features/auth/PrivateRoute'));
 const Users = lazy(() => import('../pages/user'));
 const AgentChat = lazy(() => import('../pages/agent'));
+const AgentSettings = lazy(() => import('../pages/agentSettings'));
 const Plugins = lazy(() => import('../pages/plugins'));
 const Skills = lazy(() => import('../pages/skills'));
 const Cron = lazy(() => import('../pages/cron'));
@@ -74,6 +75,14 @@ function App() {
           element={
             <Suspense fallback={<Loading />}>
               <AgentChat />
+            </Suspense>
+          }
+        />
+        <Route
+          path="agent/:agentId/settings/:tab?"
+          element={
+            <Suspense fallback={<Loading />}>
+              <AgentSettings />
             </Suspense>
           }
         />

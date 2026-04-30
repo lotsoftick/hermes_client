@@ -36,10 +36,15 @@ export default {
 
   update: validate([
     param('id').isInt().withMessage('Incorrect request url'),
+    // Both `name` and the cap fields are optional. Allowing all three
+    // sub-resources to be patched independently keeps the UI flexible
+    // (rename without re-entering caps, set caps without renaming).
     body('name')
-      .notEmpty()
-      .withMessage('Please enter the agent name')
+      .optional()
       .isLength({ min: 1, max: 100 })
       .withMessage('Agent name must contain between 1 and 100 characters'),
+    body('dailyCapUsd').optional({ nullable: true }),
+    body('monthlyCapUsd').optional({ nullable: true }),
+    body('allTimeCapUsd').optional({ nullable: true }),
   ]),
 };

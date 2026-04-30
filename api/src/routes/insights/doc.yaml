@@ -1,0 +1,354 @@
+paths:
+  /insights:
+    get:
+      tags:
+        - insights
+      security:
+        - bearerAuth: []
+      operationId: getInsights
+      summary: Token usage and cost analytics across Hermes profiles
+      description: |
+        Reads each profile's `~/.hermes/.../state.db` directly (read-only)
+        and aggregates the result. The query is cheap enough to call on
+        page load, but we deliberately don't shell out to `hermes insights`
+        because that command omits dollar amounts and per-day buckets.
+
+        Scope precedence:
+          1. `agentId` — resolves to the agent's `hermesProfile` *and*
+             includes the agent's spend caps in the response.
+          2. `profile` — restrict to that exact Hermes profile.
+          3. unscoped — aggregate across every profile under
+             `~/.hermes/profiles` (plus the implicit `default`).
+
+        `spendWindows` are always returned and are independent of
+        `days` — they always tell the truth about today / this month /
+        all-time spend regardless of which histogram window the caller
+        is rendering.
+      parameters:
+        - in: query
+          name: days
+          description: Histogram window length in days (1–365). Defaults to 30.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+        - in: query
+          name: profile
+          description: Hermes profile name. Ignored when `agentId` is set.
+          schema:
+            type: string
+        - in: query
+          name: agentId
+          description: |
+            Numeric agent id. When present, takes precedence over `profile`
+            and additionally returns the agent's `caps` in the response.
+          schema:
+            type: integer
+        - in: query
+          name: topN
+          description: Number of top sessions to return (1–50). Defaults to 10.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        200:
+          description: Aggregated insights payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/insightsResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+  /insights/agents-spend:
+    get:
+      tags:
+        - insights
+      security:
+        - bearerAuth: []
+      operationId: getAgentsSpend
+      summary: Per-agent rolling spend windows for the sidebar progress rings
+      description: |
+        Lightweight aggregator that returns one row per active agent
+        with their advisory caps and three rolling spend windows
+        (today / this month / all-time). Designed to be polled cheaply
+        (≈ every 60s) without re-running the full `/insights` query.
+      responses:
+        200:
+          description: One row per active agent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/agentsSpendResponse'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
+
+components:
+  schemas:
+    spendWindows:
+      type: object
+      description: |
+        Three rolling USD spend windows for one scope. Always present;
+        zero-filled when the underlying state.db is missing or empty.
+      properties:
+        dayUsd:
+          type: number
+          format: float
+          description: Local-midnight → now.
+        monthUsd:
+          type: number
+          format: float
+          description: Local 1st-of-month 00:00 → now.
+        allTimeUsd:
+          type: number
+          format: float
+          description: Full session history.
+      required: [dayUsd, monthUsd, allTimeUsd]
+    spendCaps:
+      type: object
+      description: |
+        Mirror of the Agent record's cap fields. `null` means "no cap".
+      properties:
+        dailyCapUsd:
+          type: number
+          format: float
+          nullable: true
+        monthlyCapUsd:
+          type: number
+          format: float
+          nullable: true
+        allTimeCapUsd:
+          type: number
+          format: float
+          nullable: true
+      required: [dailyCapUsd, monthlyCapUsd, allTimeCapUsd]
+    insightsSummary:
+      type: object
+      properties:
+        sessions:
+          type: integer
+        messages:
+          type: integer
+        toolCalls:
+          type: integer
+        apiCalls:
+          type: integer
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        cacheReadTokens:
+          type: integer
+        cacheWriteTokens:
+          type: integer
+        reasoningTokens:
+          type: integer
+        totalTokens:
+          type: integer
+        estimatedCostUsd:
+          type: number
+          format: float
+        actualCostUsd:
+          type: number
+          format: float
+        costUsd:
+          type: number
+          format: float
+          description: |
+            `COALESCE(actual_cost_usd, estimated_cost_usd, 0)` summed
+            across the window. Use this as the headline spend number.
+        activeTimeMs:
+          type: integer
+    insightsDailyBucket:
+      type: object
+      properties:
+        date:
+          type: string
+          example: '2026-04-25'
+        sessions:
+          type: integer
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        totalTokens:
+          type: integer
+        costUsd:
+          type: number
+          format: float
+    insightsModelBreakdown:
+      type: object
+      properties:
+        model:
+          type: string
+        sessions:
+          type: integer
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        totalTokens:
+          type: integer
+        costUsd:
+          type: number
+          format: float
+    insightsSourceBreakdown:
+      type: object
+      properties:
+        source:
+          type: string
+          description: |
+            Hermes session source — typically `cli`, `gateway`, `cron`
+            or a messenger integration label.
+        sessions:
+          type: integer
+        messages:
+          type: integer
+        totalTokens:
+          type: integer
+        costUsd:
+          type: number
+          format: float
+    insightsProfileBreakdown:
+      allOf:
+        - $ref: '#/components/schemas/insightsSummary'
+        - type: object
+          properties:
+            profile:
+              type: string
+            hasData:
+              type: boolean
+              description: |
+                `false` when the profile's `state.db` is missing or
+                couldn't be opened — counters are zero.
+    insightsTopSession:
+      type: object
+      properties:
+        hermesSessionId:
+          type: string
+        profile:
+          type: string
+        model:
+          type: string
+          nullable: true
+        source:
+          type: string
+        title:
+          type: string
+          nullable: true
+        startedAtMs:
+          type: integer
+        endedAtMs:
+          type: integer
+          nullable: true
+        messageCount:
+          type: integer
+        toolCallCount:
+          type: integer
+        totalTokens:
+          type: integer
+        costUsd:
+          type: number
+          format: float
+          nullable: true
+        costStatus:
+          type: string
+          nullable: true
+        conversationId:
+          type: integer
+          nullable: true
+          description: |
+            Local Conversation id for deep-linking; `null` for sessions
+            started outside the client (CLI REPL, cron, gateway).
+        conversationAgentId:
+          type: integer
+          nullable: true
+    insightsResponse:
+      type: object
+      properties:
+        windowDays:
+          type: integer
+        fromIso:
+          type: string
+          format: date-time
+        toIso:
+          type: string
+          format: date-time
+        schemaVersion:
+          type: integer
+          nullable: true
+          description: Hermes' `schema_version.version`, or `null` if unreadable.
+        partial:
+          type: boolean
+          description: |
+            `true` when one or more profiles' state.db could not be opened.
+            Those profiles still appear in `byProfile` with `hasData: false`.
+        profile:
+          type: string
+          nullable: true
+          description: |
+            Echoes the resolved profile when scoped (either by `profile`
+            or by `agentId`); `null` for the cross-profile rollup.
+        agentId:
+          type: integer
+          nullable: true
+        spendWindows:
+          $ref: '#/components/schemas/spendWindows'
+        caps:
+          allOf:
+            - $ref: '#/components/schemas/spendCaps'
+          nullable: true
+          description: Only populated when scoped to a single agent.
+        summary:
+          $ref: '#/components/schemas/insightsSummary'
+        daily:
+          type: array
+          description: |
+            One bucket per day in the requested window. Days with no
+            activity are zero-filled so the chart never has gaps.
+          items:
+            $ref: '#/components/schemas/insightsDailyBucket'
+        byProfile:
+          type: array
+          items:
+            $ref: '#/components/schemas/insightsProfileBreakdown'
+        byModel:
+          type: array
+          items:
+            $ref: '#/components/schemas/insightsModelBreakdown'
+        bySource:
+          type: array
+          items:
+            $ref: '#/components/schemas/insightsSourceBreakdown'
+        topSessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/insightsTopSession'
+    agentSpendRow:
+      type: object
+      properties:
+        agentId:
+          type: integer
+        agentName:
+          type: string
+        hermesProfile:
+          type: string
+        caps:
+          $ref: '#/components/schemas/spendCaps'
+        spendWindows:
+          $ref: '#/components/schemas/spendWindows'
+      required: [agentId, agentName, hermesProfile, caps, spendWindows]
+    agentsSpendResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/agentSpendRow'
+      required: [agents]
