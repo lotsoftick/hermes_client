@@ -164,7 +164,7 @@ const chat: Chat = async (req, res, next) => {
     // sees the stream end, so anything saved after `res.end()` here
     // would race the follow-up `getMessages` request and the bubble
     // would briefly disappear from the UI.
-    if (result.sessionId && !conv.sessionKey) {
+    if (result.sessionId && conv.sessionKey !== result.sessionId) {
       await convRepo.update(conv._id, { sessionKey: result.sessionId });
       conv.sessionKey = result.sessionId;
     }
