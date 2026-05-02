@@ -115,6 +115,14 @@ const chat: Chat = async (req, res, next) => {
     const agent = await agentRepo.findOneBy({ _id: conv.agentId });
     const profile = agent?.hermesProfile || 'default';
 
+    // Heal dead Hermes session bindings before we send the next turn. If the
+    // session file disappeared on disk, trying to keep the stale key around
+    // only increases the chance of a dangling UI turn on the next request.
+    if (conv.sessionKey && !hermes.sessionExists(profile, conv.sessionKey)) {
+      await convRepo.update(conv._id, { sessionKey: null });
+      conv.sessionKey = null;
+    }
+
     const persistedFiles = uploadedFiles.map((uf) =>
       hermes.persistUpload(conv._id, uf.path, uf.originalname, uf.mimetype, uf.size)
     );
@@ -169,10 +177,18 @@ const chat: Chat = async (req, res, next) => {
       conv.sessionKey = result.sessionId;
     }
     let savedAssistantId: number | null = null;
-    if (result.text) {
+    const assistantText =
+      result.text ||
+      result.error ||
+      (result.exitCode && result.exitCode !== 0
+        ? `Hermes exited with code ${result.exitCode} before producing a response.`
+        : !result.sessionId
+          ? 'Hermes did not return a response. Please retry your last message.'
+          : '');
+    if (assistantText) {
       const assistantMessage = msgRepo.create({
         conversationId: conv._id,
-        text: result.text,
+        text: assistantText,
         role: 'assistant' as const,
         createdBy: req.user!._id,
         createdAt: new Date(),
