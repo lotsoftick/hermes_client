@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, useTheme } from '@mui/material';
-import { People, Extension, Psychology, Schedule } from '@mui/icons-material';
+import { Extension, Psychology, Schedule, Person } from '@mui/icons-material';
 import { Link, useLocation } from 'react-router';
 
 interface MenuItem {
@@ -10,7 +10,7 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { text: 'USERS', icon: <People sx={{ fontSize: 18 }} />, path: '/users' },
+  { text: 'ACCOUNT', icon: <Person sx={{ fontSize: 18 }} />, path: '/account' },
   { text: 'PLUGINS', icon: <Extension sx={{ fontSize: 18 }} />, path: '/plugins' },
   { text: 'SKILLS', icon: <Psychology sx={{ fontSize: 18 }} />, path: '/skills' },
   { text: 'CRON', icon: <Schedule sx={{ fontSize: 18 }} />, path: '/cron' },
