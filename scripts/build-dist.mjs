@@ -32,17 +32,52 @@ const MIME = {
 // old bundles. Everything else can use the default (immutable hashed names).
 const NO_CACHE_FILES = new Set(['sw.js', 'registerSW.js', 'workbox-window.prod.es5.mjs']);
 
-function injectRuntimeConfig(html, hostHeader) {
-  const hostname = (hostHeader || '').split(':')[0] || 'localhost';
-  const apiBaseUrl = 'http://' + hostname + ':' + API_PORT + '/api';
+function firstHeader(value) {
+  return Array.isArray(value) ? value[0] : (value || '');
+}
+
+function hostToHostname(host) {
+  try {
+    return new URL('http://' + host).hostname || 'localhost';
+  } catch {
+    return host.replace(/:\\d+$/, '') || 'localhost';
+  }
+}
+
+function injectRuntimeConfig(html, headers) {
+  const forwardedProto = firstHeader(headers['x-forwarded-proto']).split(',')[0].trim();
+  const protocol = forwardedProto || 'http';
+  const forwardedHost = firstHeader(headers['x-forwarded-host']).split(',')[0].trim();
+  const host = forwardedHost || firstHeader(headers.host).trim() || 'localhost';
+  const hostname = hostToHostname(host);
+  const apiBaseUrl = protocol + '://' + hostname + ':' + API_PORT + '/api';
   const cfg = JSON.stringify({ apiBaseUrl, apiPort: API_PORT });
   const tag = '<script>window.__HERMES_CONFIG__=' + cfg + ';</script>';
   if (html.includes('</head>')) return html.replace('</head>', '  ' + tag + '\\n  </head>');
   return tag + html;
 }
 
+function resolveFilePath(url) {
+  try {
+    const rawPath = String(url || '/').split('?')[0].split('#')[0] || '/';
+    const pathname = decodeURIComponent(rawPath);
+    const target = pathname === '/' ? '/index.html' : pathname;
+    const candidate = path.resolve(DIST, '.' + target);
+    if (candidate !== DIST && !candidate.startsWith(DIST + path.sep)) return null;
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
 http.createServer((req, res) => {
-  let filePath = path.join(DIST, req.url === '/' ? 'index.html' : req.url);
+  const requestedPath = resolveFilePath(req.url);
+  if (!requestedPath) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+  let filePath = requestedPath;
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     filePath = path.join(DIST, 'index.html');
   }
@@ -51,7 +86,7 @@ http.createServer((req, res) => {
   try {
     if (mime === 'text/html') {
       const html = fs.readFileSync(filePath, 'utf-8');
-      const out = injectRuntimeConfig(html, req.headers.host);
+      const out = injectRuntimeConfig(html, req.headers);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',

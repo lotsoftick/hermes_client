@@ -29,6 +29,20 @@ interface RepoMeta {
   repoVersionUrl?: string | null;
 }
 
+function repoHasLocalChanges(repoDir: string): boolean {
+  try {
+    const out = execFileSync('git', ['status', '--porcelain'], {
+      cwd: repoDir,
+      encoding: 'utf-8',
+      timeout: 15000,
+      env: GIT_ENV,
+    });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function deriveUrls(repoHttpsUrl: string | null | undefined): {
   https: string | null;
   versionUrl: string | null;
@@ -137,8 +151,19 @@ export async function applyUpdate(): Promise<{ ok: boolean; error?: string }> {
   }
   updating = true;
 
+  const sourceRepo =
+    meta.sourceRepo && fs.existsSync(path.join(meta.sourceRepo, 'scripts', 'start.js'))
+      ? meta.sourceRepo
+      : UPDATE_DIR;
+  const shouldPreserveLocalRepo =
+    sourceRepo === UPDATE_DIR &&
+    fs.existsSync(path.join(UPDATE_DIR, '.git')) &&
+    repoHasLocalChanges(UPDATE_DIR);
+
   try {
-    if (fs.existsSync(path.join(UPDATE_DIR, '.git'))) {
+    if (shouldPreserveLocalRepo) {
+      // Keep local fixes intact and rebuild from the current checkout.
+    } else if (fs.existsSync(path.join(UPDATE_DIR, '.git'))) {
       execFileSync('git', ['fetch', '--all'], {
         cwd: UPDATE_DIR,
         encoding: 'utf-8',
@@ -164,7 +189,7 @@ export async function applyUpdate(): Promise<{ ok: boolean; error?: string }> {
     return { ok: false, error: `git failed: ${errMsg(err)}` };
   }
 
-  const startScript = path.join(UPDATE_DIR, 'scripts', 'start.js');
+  const startScript = path.join(sourceRepo, 'scripts', 'start.js');
   if (!fs.existsSync(startScript)) {
     updating = false;
     return { ok: false, error: 'Update source missing start script' };
@@ -174,7 +199,7 @@ export async function applyUpdate(): Promise<{ ok: boolean; error?: string }> {
     const logFile = path.join(DIST, 'update.log');
     const fd = fs.openSync(logFile, 'w');
     const child = spawn(process.execPath, [startScript], {
-      cwd: UPDATE_DIR,
+      cwd: sourceRepo,
       detached: true,
       stdio: ['ignore', fd, fd],
       env: {

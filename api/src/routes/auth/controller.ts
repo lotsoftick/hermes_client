@@ -6,6 +6,7 @@ import AppDataSource from '../../data-source';
 import { User, BlackList } from '../../entities';
 import { Login, Logout, GetCurentUser, UserResponse } from '../../@types/user';
 import { JwtPayload } from '../../@types/blacklist';
+import { issuePtyTicket } from '../../services/pty/tickets';
 
 const JWT_EXPIRES_IN: SignOptions['expiresIn'] =
   (process.env.JWT_EXPIRES_IN as SignOptions['expiresIn']) || '30d';
@@ -72,4 +73,12 @@ const logout: Logout = async (req, res, next) => {
   }
 };
 
-export { getCurrentUser, login, logout };
+const createPtyTicket: GetCurentUser = async (req, res, next) => {
+  try {
+    return res.json({ ticket: issuePtyTicket(req.user!._id) } as never);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export { getCurrentUser, login, logout, createPtyTicket };
