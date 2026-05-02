@@ -12,6 +12,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { WarningAmberRounded } from '@mui/icons-material';
 import { useGetAgentQuery, useUpdateAgentMutation } from '../../entities/agent';
 import { useGetAgentsSpendQuery, type SpendWindows } from '../../entities/insights';
@@ -38,7 +39,7 @@ function formatUsd(usd: number, opts?: { compact?: boolean }): string {
  * numeric form we send to the API. Empty string becomes `null` (= clear).
  */
 function parseCap(input: string): number | null {
- const t = input.trim();
+  const t = input.trim();
   if (t === '') return null;
   const n = Number(t);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -129,7 +130,10 @@ const CapInput = memo(function CapInput({
               inputProps: { min: 0, step: 0.5, inputMode: 'decimal' },
             },
           }}
-          sx={{ mt: 0.5 }}
+          sx={{
+            mt: 0.5,
+            '& .MuiOutlinedInput-root': { boxShadow: 'none' },
+          }}
           fullWidth
         />
         {showBar ? (
@@ -237,8 +241,16 @@ export default function SpendCapsCard({ agentId }: SpendCapsCardProps) {
 
   return (
     <Paper
-      variant="outlined"
-      sx={{ p: 2.5, borderRadius: 2, position: 'relative', overflow: 'hidden' }}
+      elevation={0}
+      sx={{
+        p: 2.5,
+        borderRadius: 2,
+        position: 'relative',
+        overflow: 'hidden',
+        boxShadow: 'none',
+        border: 'none',
+        bgcolor: 'background.paper',
+      }}
     >
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
@@ -259,24 +271,66 @@ export default function SpendCapsCard({ agentId }: SpendCapsCardProps) {
           size="small"
           disabled={!dirty || saving || agentLoading}
           onClick={handleSave}
+          sx={{
+            minHeight: 26,
+            py: 0.25,
+            px: 1,
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            lineHeight: 1.2,
+          }}
         >
-          {saving ? <CircularProgress size={16} sx={{ color: 'inherit' }} /> : 'Save'}
+          {saving ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : 'Save'}
         </Button>
       </Stack>
 
       <Alert
-        icon={<WarningAmberRounded fontSize="small" />}
+        icon={<WarningAmberRounded sx={{ fontSize: '1.1rem' }} />}
         severity="warning"
-        variant="outlined"
-        sx={{ mb: 2, py: 0.5 }}
+        sx={(theme) => ({
+          mb: 2,
+          py: 0.5,
+          px: 1,
+          display: 'flex',
+          alignItems: 'flex-start',
+          minHeight: 0,
+          borderRadius: 2,
+          boxShadow: 'none',
+          border: 'none',
+          bgcolor:
+            theme.palette.mode === 'dark'
+              ? alpha(theme.palette.warning.main, 0.2)
+              : alpha(theme.palette.warning.main, 0.14),
+          color:
+            theme.palette.mode === 'dark'
+              ? theme.palette.warning.light
+              : '#5d4037',
+          '& .MuiAlert-icon': {
+            alignSelf: 'flex-start',
+            color: theme.palette.warning.main,
+            marginRight: 0.75,
+            marginTop: '0.08em',
+            padding: 0,
+            opacity: 1,
+          },
+          '& .MuiAlert-message': {
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            padding: 0,
+          },
+        })}
       >
-        These limits do <strong>not</strong> stop the agent or throttle its performance —
-        they're an advisory budget so you can watch your preferred spend per window. The
-        agent will keep running even after a cap is reached.
+        These limits do{' '}
+        <Box component="span" sx={{ textDecoration: 'underline', fontWeight: 700 }}>
+          not
+        </Box>{' '}
+        stop the agent or throttle its performance — they're an advisory budget so you can
+        watch your preferred spend per window. The agent will keep running even after a cap is
+        reached.
       </Alert>
 
       {saveError ? (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" variant="outlined" sx={{ mb: 2, boxShadow: 'none', border: 'none' }}>
           Couldn't save the caps. Please retry.
         </Alert>
       ) : null}

@@ -87,12 +87,14 @@ const MetricCard = memo(function MetricCard({
   const theme = useTheme();
   return (
     <Paper
-      variant="outlined"
+      elevation={0}
       sx={{
         p: 2,
         flex: '1 1 200px',
         minWidth: 0,
         borderRadius: 2,
+        boxShadow: 'none',
+        border: 'none',
         bgcolor:
           tone === 'cost'
             ? theme.palette.mode === 'dark'
@@ -261,7 +263,7 @@ const TopSessionRow = memo(function TopSessionRow({ session }: TopSessionRowProp
 
   return (
     <Paper
-      variant="outlined"
+      elevation={0}
       sx={{
         p: 1.5,
         borderRadius: 2,
@@ -269,6 +271,9 @@ const TopSessionRow = memo(function TopSessionRow({ session }: TopSessionRowProp
         alignItems: 'center',
         gap: 1.5,
         opacity: linkable ? 1 : 0.95,
+        boxShadow: 'none',
+        border: 'none',
+        bgcolor: 'background.paper',
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -466,7 +471,7 @@ export default function InsightsPanel({
 
       {/* Error state */}
       {error ? (
-        <Alert severity="error">
+        <Alert severity="error" sx={{ boxShadow: 'none', border: 'none' }}>
           Couldn’t load insights. The Hermes <code>state.db</code> may be locked or in an
           unexpected schema. Try again in a moment.
         </Alert>
@@ -474,7 +479,7 @@ export default function InsightsPanel({
 
       {/* Partial-data warning (some profile's state.db missing) */}
       {data?.partial && data.byProfile.some((p) => !p.hasData) ? (
-        <Alert severity="info" variant="outlined">
+        <Alert severity="info" variant="outlined" sx={{ boxShadow: 'none', border: 'none' }}>
           Some profiles haven’t logged any sessions yet, so their numbers are zero. Run{' '}
           <code>hermes -p &lt;profile&gt; chat</code> at least once to materialise their
           analytics database.
@@ -533,7 +538,10 @@ export default function InsightsPanel({
       </Stack>
 
       {/* Daily chart */}
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+      <Paper
+        elevation={0}
+        sx={{ p: 2, borderRadius: 2, boxShadow: 'none', border: 'none', bgcolor: 'background.paper' }}
+      >
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 600, flex: 1 }}>
             Daily activity
@@ -563,7 +571,16 @@ export default function InsightsPanel({
 
       {/* Per-profile (only when not scoped) */}
       {!isScoped && data && data.byProfile.length > 1 ? (
-        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 2,
+            overflow: 'hidden',
+            boxShadow: 'none',
+            border: 'none',
+            bgcolor: 'background.paper',
+          }}
+        >
           <Box sx={{ p: 2, pb: 1 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
               By profile
@@ -603,7 +620,16 @@ export default function InsightsPanel({
 
       {/* Per-model */}
       {data && data.byModel.length > 0 ? (
-        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 2,
+            overflow: 'hidden',
+            boxShadow: 'none',
+            border: 'none',
+            bgcolor: 'background.paper',
+          }}
+        >
           <Box sx={{ p: 2, pb: 1 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
               By model
@@ -647,7 +673,16 @@ export default function InsightsPanel({
 
       {/* Per-source */}
       {data && data.bySource.length > 1 ? (
-        <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 2,
+            overflow: 'hidden',
+            boxShadow: 'none',
+            border: 'none',
+            bgcolor: 'background.paper',
+          }}
+        >
           <Box sx={{ p: 2, pb: 1 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
               By platform
@@ -716,12 +751,14 @@ export default function InsightsPanel({
 const EmptyState = memo(function EmptyState() {
   return (
     <Paper
-      variant="outlined"
+      elevation={0}
       sx={{
         p: 4,
         textAlign: 'center',
         borderRadius: 2,
-        borderStyle: 'dashed',
+        boxShadow: 'none',
+        border: 'none',
+        bgcolor: 'action.hover',
       }}
     >
       <Typography variant="body2" color="text.secondary">
