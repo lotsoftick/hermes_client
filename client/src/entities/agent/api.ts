@@ -18,6 +18,11 @@ export interface Agent {
   updatedAt: string;
   model?: string | null;
   exists?: boolean;
+  /**
+   * Whether the hermes gateway daemon for this agent's profile is loaded.
+   * Decorated by the API on every `/agent` and `/agent/:id` fetch.
+   */
+  gatewayRunning?: boolean;
   dailyCapUsd: number | null;
   monthlyCapUsd: number | null;
   allTimeCapUsd: number | null;
@@ -53,6 +58,18 @@ export interface UpdateAgentBody {
   dailyCapUsd?: number | null;
   monthlyCapUsd?: number | null;
   allTimeCapUsd?: number | null;
+}
+
+/**
+ * Result of a gateway lifecycle action. `raw` is the merged
+ * stdout/stderr from the underlying `hermes gateway *` invocation —
+ * useful for surfacing failures verbatim if we ever build a details
+ * view, otherwise ignored.
+ */
+export interface GatewayOpResponse {
+  ok: boolean;
+  error?: string;
+  raw: string;
 }
 
 export const agentsApi = baseApi.injectEndpoints({
@@ -105,6 +122,21 @@ export const agentsApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: ['Agent', 'AgentSpend'],
     }),
+    // Gateway lifecycle. Each mutation invalidates the agent tags so the
+    // sidebar's status dot reflects the new daemon state on the very next
+    // refetch (no need to wait out the 15s status cache).
+    startGateway: build.mutation<GatewayOpResponse, string>({
+      query: (id) => ({ url: `/agent/${id}/gateway/start`, method: 'POST' }),
+      invalidatesTags: (_res, _err, id) => ['Agent', { type: 'Agent', id }],
+    }),
+    stopGateway: build.mutation<GatewayOpResponse, string>({
+      query: (id) => ({ url: `/agent/${id}/gateway/stop`, method: 'POST' }),
+      invalidatesTags: (_res, _err, id) => ['Agent', { type: 'Agent', id }],
+    }),
+    restartGateway: build.mutation<GatewayOpResponse, string>({
+      query: (id) => ({ url: `/agent/${id}/gateway/restart`, method: 'POST' }),
+      invalidatesTags: (_res, _err, id) => ['Agent', { type: 'Agent', id }],
+    }),
     getSessionSettings: build.query<
       SessionSettingsResponse,
       { agentId: string; conversationId: string }
@@ -140,4 +172,7 @@ export const {
   useSyncAgentsMutation,
   useGetSessionSettingsQuery,
   usePatchSessionSettingsMutation,
+  useStartGatewayMutation,
+  useStopGatewayMutation,
+  useRestartGatewayMutation,
 } = agentsApi;

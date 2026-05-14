@@ -13,16 +13,9 @@ import {
 } from '@mui/material';
 import { Close, Refresh } from '@mui/icons-material';
 import TerminalView, { type TerminalColors, type TerminalStatus } from './TerminalView';
+import { formatHermesCmd, type HermesSubcommand } from './cmd';
 
-export type HermesSubcommand =
-  | 'model'
-  | 'login'
-  | 'auth'
-  | 'config'
-  | 'setup'
-  | 'profile'
-  | 'doctor'
-  | 'status';
+export type { HermesSubcommand } from './cmd';
 
 interface SetupTerminalProps {
   open: boolean;
@@ -95,7 +88,7 @@ export default function SetupTerminal({
 
   const onEntered = useCallback(() => setReady(true), []);
 
-  const headerLabel = title || `hermes -p ${profile} ${cmd}`;
+  const headerLabel = title || `hermes -p ${profile} ${formatHermesCmd(cmd)}`;
   const chip = STATUS_CHIP[status];
   const chipLabel = status === 'closed' && exitCode === 0 ? 'done' : chip.label;
 

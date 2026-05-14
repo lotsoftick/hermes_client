@@ -8,5 +8,6 @@ export * from './sync';
 export * from './skills';
 export * from './plugins';
 export * from './cron';
+export * from './gateway';
 export * from './insights';
 export * from './uploads';

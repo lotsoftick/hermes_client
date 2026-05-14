@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { hermesExec, stripAnsi } from './cli';
+import { hermesExec } from './cli';
 import { HERMES_HOME, profileHome } from './paths';
 import {
   CronJob,
@@ -14,6 +14,11 @@ import {
 } from '../../@types/cron';
 import { profileSessionsDir } from './profiles';
 import { cleanMessageText } from './textCleanup';
+import {
+  readGatewayStatusFor,
+  startProfileGateway,
+  stopProfileGateway,
+} from './gateway';
 
 /**
  * We bypass `hermes cron list` and read the on-disk JSON directly. Three
@@ -110,7 +115,7 @@ function normalizeSchedule(raw: FileSchedule | undefined): CronSchedule {
   const display = raw?.display;
   const kind = raw?.kind;
   if (kind === 'interval' && typeof raw?.minutes === 'number') {
-    const minutes = raw.minutes;
+    const { minutes } = raw;
     return {
       kind: 'every',
       every: `${minutes}m`,
@@ -352,49 +357,6 @@ export function toggleCronJob(
 }
 
 /**
- * Detect whether the gateway is alive from `hermes gateway status` output.
- * Hermes uses three different output shapes depending on install state:
- *
- *   1. Not installed at all
- *      `✗ Gateway is not running\nTo start: hermes gateway run …`
- *
- *   2. Installed (launchd/systemd unit present) but not loaded
- *      `Launchd plist: …`
- *      `✓ Service definition matches the current Hermes install`
- *      `✗ Gateway service is not loaded`
- *
- *   3. Installed *and* loaded — the running state
- *      `Launchd plist: …`
- *      `✓ Service definition matches the current Hermes install`
- *      `✓ Gateway service is loaded`
- *      `{ … "PID" = 12345 … }`
- *
- * We treat the daemon as running when any positive marker is present and no
- * negative qualifier appears in the same output. The PID dump is a
- * belt-and-braces fallback for future format tweaks.
- */
-function parseGatewayRunning(raw: string): boolean {
-  const negative = /(not running|not loaded|not installed|not active)/i.test(raw);
-  if (negative) return false;
-  return (
-    /Gateway is running/i.test(raw) ||
-    /Gateway service is loaded/i.test(raw) ||
-    /"PID"\s*=\s*\d+/.test(raw)
-  );
-}
-
-/** Single-profile status check. `default` profile uses no `-p` flag. */
-function readGatewayStatusFor(profile: string): Omit<GatewayProfileStatus, 'jobCount'> {
-  const result = hermesExec(['gateway', 'status'], {
-    profile: profile === 'default' ? null : profile,
-    timeoutMs: 10000,
-  });
-  const raw = stripAnsi(`${result.stdout}\n${result.stderr}`).trim();
-  if (!result.ok) return { profile, running: false, raw, error: result.error };
-  return { profile, running: parseGatewayRunning(raw), raw };
-}
-
-/**
  * Aggregate gateway state across every profile that has at least one cron
  * job (plus `default` for visibility). This is what the UI uses to decide
  * which gateways need starting — covering only profiles whose missing
@@ -409,8 +371,15 @@ export function getGatewayStatus(): GatewayStatus {
   // any jobs.
   if (!jobsByProfile.has('default')) jobsByProfile.set('default', 0);
 
+  // Sort with `default` first, then alphabetical — keeps the UI's
+  // profile list stable across renders without nesting ternaries.
+  function compareProfileNames(a: string, b: string): number {
+    if (a === 'default') return -1;
+    if (b === 'default') return 1;
+    return a.localeCompare(b);
+  }
   const profiles: GatewayProfileStatus[] = Array.from(jobsByProfile.entries())
-    .sort(([a], [b]) => (a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b)))
+    .sort(([a], [b]) => compareProfileNames(a, b))
     .map(([profile, jobCount]) => ({ ...readGatewayStatusFor(profile), jobCount }));
 
   const profilesMissingGateway = profiles
@@ -422,62 +391,6 @@ export function getGatewayStatus(): GatewayStatus {
   const allJobsCovered = profilesMissingGateway.length === 0;
 
   return { profiles, allJobsCovered, profilesMissingGateway, profilesWithGateway };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/**
- * Install (idempotent) + start a single profile's gateway, then poll its
- * status until the daemon reports loaded. Polling avoids the UX papercut
- * where the launchctl bootstrap hasn't completed by the time the
- * post-mutation status fetch runs.
- */
-async function startProfileGateway(
-  profile: string
-): Promise<{ ok: boolean; error?: string; raw: string }> {
-  const profileFlag = profile === 'default' ? null : profile;
-  const installed = hermesExec(['gateway', 'install'], { profile: profileFlag, timeoutMs: 60000 });
-  if (!installed.ok) {
-    return {
-      ok: false,
-      error: installed.stderr || installed.stdout || installed.error,
-      raw: stripAnsi(`${installed.stdout}\n${installed.stderr}`).trim(),
-    };
-  }
-  const started = hermesExec(['gateway', 'start'], { profile: profileFlag, timeoutMs: 30000 });
-  let raw = stripAnsi(
-    `${installed.stdout}\n${installed.stderr}\n${started.stdout}\n${started.stderr}`
-  ).trim();
-  if (!started.ok) {
-    return { ok: false, error: started.stderr || started.stdout || started.error, raw };
-  }
-  for (let i = 0; i < 6; i += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    await sleep(1000);
-    const status = readGatewayStatusFor(profile);
-    if (status.running) {
-      raw = `${raw}\n---\n${status.raw}`;
-      return { ok: true, raw };
-    }
-  }
-  raw = `${raw}\n---\n${readGatewayStatusFor(profile).raw}`;
-  return {
-    ok: false,
-    error: 'Gateway start command completed but the daemon never reported loaded.',
-    raw,
-  };
-}
-
-function stopProfileGateway(profile: string): { ok: boolean; error?: string; raw: string } {
-  const profileFlag = profile === 'default' ? null : profile;
-  const result = hermesExec(['gateway', 'stop'], { profile: profileFlag, timeoutMs: 30000 });
-  const raw = stripAnsi(`${result.stdout}\n${result.stderr}`).trim();
-  if (!result.ok) return { ok: false, error: result.stderr || result.stdout || result.error, raw };
-  return { ok: true, raw };
 }
 
 /**

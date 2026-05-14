@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { API_BASE_URL } from '../../../../shared/api';
-import type { HermesSubcommand } from './SetupTerminal';
+import { formatHermesCmd, type HermesSubcommand } from './cmd';
 
 export type TerminalStatus = 'connecting' | 'connected' | 'closed' | 'error';
 
@@ -184,7 +184,7 @@ export default function TerminalView({
     }
 
     emit('connecting');
-    term.writeln(`${muted}$ hermes -p ${profile} ${cmd}${reset}\r\n`);
+    term.writeln(`${muted}$ hermes -p ${profile} ${formatHermesCmd(cmd)}${reset}\r\n`);
 
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';

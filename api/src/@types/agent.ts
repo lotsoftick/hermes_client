@@ -12,6 +12,11 @@ export type AgentResponse = {
   model?: string | null;
   /** Whether the profile directory still exists in `~/.hermes`. */
   exists?: boolean;
+  /**
+   * Whether the hermes gateway daemon for this profile is currently loaded.
+   * Read at request time (cached briefly) to drive the sidebar status dot.
+   */
+  gatewayRunning?: boolean;
   /** Advisory spend caps in USD; `null` means no cap. */
   dailyCapUsd: number | null;
   monthlyCapUsd: number | null;
