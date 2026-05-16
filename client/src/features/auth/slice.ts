@@ -1,14 +1,8 @@
 import { createSlice } from '@reduxjs/toolkit';
-import { authApi } from './api';
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-}
+import { authApi, type AuthUser } from './api';
 
 interface AuthState {
-  user: User | null;
+  user: AuthUser | null;
   token: string | null;
   isAuthenticated: boolean;
 }
@@ -33,8 +27,7 @@ const authSlice = createSlice({
   extraReducers: (builder) => {
     builder
       .addMatcher(authApi.endpoints.login.matchFulfilled, (state, action) => {
-        const { id, email, name } = action.payload as User & { accessToken?: string };
-        state.user = { id, email, name };
+        state.user = action.payload;
         state.token = localStorage.getItem('token');
         state.isAuthenticated = true;
       })
