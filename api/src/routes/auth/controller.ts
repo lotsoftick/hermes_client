@@ -6,13 +6,15 @@ import AppDataSource from '../../data-source';
 import { User, BlackList } from '../../entities';
 import { Login, Logout, GetCurentUser, UserResponse } from '../../@types/user';
 import { JwtPayload } from '../../@types/blacklist';
+import { issuePtyTicket } from '../../services/pty/tickets';
+import isSingleUserMode from '../../config/singleUser';
 
 const JWT_EXPIRES_IN: SignOptions['expiresIn'] =
   (process.env.JWT_EXPIRES_IN as SignOptions['expiresIn']) || '30d';
 
 const getCurrentUser: GetCurentUser = async (req, res, next) => {
   try {
-    return res.json(req.user);
+    return res.json({ ...(req.user as UserResponse), singleUserMode: isSingleUserMode() });
   } catch (error) {
     return next(error);
   }
@@ -44,7 +46,11 @@ const login: Login = async (req, res, next) => {
     );
 
     const { password: hashed, deletedAt, ...userData } = user;
-    const body = { ...(userData as UserResponse), accessToken: token };
+    const body = {
+      ...(userData as UserResponse),
+      singleUserMode: isSingleUserMode(),
+      accessToken: token,
+    };
     return res.header('access-token', token).json(body);
   } catch (error) {
     return next(error);
@@ -72,4 +78,12 @@ const logout: Logout = async (req, res, next) => {
   }
 };
 
-export { getCurrentUser, login, logout };
+const createPtyTicket: GetCurentUser = async (req, res, next) => {
+  try {
+    return res.json({ ticket: issuePtyTicket(req.user!._id) } as never);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export { getCurrentUser, login, logout, createPtyTicket };

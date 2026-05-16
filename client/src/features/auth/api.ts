@@ -1,9 +1,16 @@
 import { baseApi } from '../../shared/api/baseApi';
 
-interface User {
-  id: string;
+export interface AuthUser {
+  _id?: number;
+  id?: string;
   email: string;
   name: string;
+  /**
+   * Mirrors `HERMES_SINGLE_USER_MODE` on the server. Drives whether the
+   * sidebar shows the multi-user "Users" admin entry or the single-user
+   * "Account" self-edit entry.
+   */
+  singleUserMode?: boolean;
 }
 
 interface LoginRequest {
@@ -13,7 +20,7 @@ interface LoginRequest {
 
 export const authApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    login: builder.mutation<User, LoginRequest>({
+    login: builder.mutation<AuthUser & { accessToken?: string }, LoginRequest>({
       query: (credentials) => ({
         url: '/auth/login',
         method: 'POST',
@@ -26,7 +33,7 @@ export const authApi = baseApi.injectEndpoints({
         method: 'DELETE',
       }),
     }),
-    getMe: builder.query<User, void>({
+    getMe: builder.query<AuthUser, void>({
       query: () => '/auth/token',
     }),
   }),

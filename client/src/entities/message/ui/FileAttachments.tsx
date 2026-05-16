@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Box, Chip, useTheme } from '@mui/material';
 import { InsertDriveFileOutlined } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
@@ -18,16 +19,47 @@ interface FileAttachmentsProps {
 export default function FileAttachments({ files, isUser }: FileAttachmentsProps) {
   const theme = useTheme();
   const { userText } = theme.palette.chat;
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
   if (!files?.length) return null;
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const created: string[] = [];
+    let cancelled = false;
+
+    async function load() {
+      const entries = await Promise.all(
+        files.map(async (f) => {
+          if (f.url.startsWith('blob:') || !token) return [f.filename, f.url] as const;
+          const fileUrl = f.url.startsWith('http') ? f.url : `${API_BASE_URL.replace('/api', '')}${f.url}`;
+          try {
+            const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${token}` } });
+            if (!res.ok) return [f.filename, ''] as const;
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            created.push(objectUrl);
+            return [f.filename, objectUrl] as const;
+          } catch {
+            return [f.filename, ''] as const;
+          }
+        })
+      );
+      if (!cancelled) setResolvedUrls(Object.fromEntries(entries.filter(([, url]) => url)));
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+      created.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [files]);
 
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8, mb: 0.5 }}>
       {files.map((f) => {
         const isImage = f.mimetype.startsWith('image/');
-        const fileUrl =
-          f.url.startsWith('blob:') || f.url.startsWith('http')
-            ? f.url
-            : `${API_BASE_URL.replace('/api', '')}${f.url}`;
+        const fileUrl = resolvedUrls[f.filename] || f.url;
+        if (!fileUrl) return null;
         if (isImage) {
           return (
             <Box
@@ -36,6 +68,7 @@ export default function FileAttachments({ files, isUser }: FileAttachmentsProps)
               href={fileUrl}
               target="_blank"
               rel="noopener"
+              download={f.originalName}
               sx={{ display: 'block', maxWidth: 200, borderRadius: 1, overflow: 'hidden' }}
             >
               <Box
@@ -60,6 +93,7 @@ export default function FileAttachments({ files, isUser }: FileAttachmentsProps)
             href={fileUrl}
             target="_blank"
             rel="noopener"
+            download={f.originalName}
             icon={<InsertDriveFileOutlined sx={{ fontSize: 14 }} />}
             label={`${f.originalName} (${formatFileSize(f.size)})`}
             size="small"

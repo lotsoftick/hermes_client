@@ -4,11 +4,10 @@ import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import path from 'path';
-import jwt from 'jsonwebtoken';
 import { URL } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { HERMES_BIN } from '../hermes/paths';
-import { JwtPayload } from '../../@types/blacklist';
+import { consumePtyTicket } from './tickets';
 
 /**
  * Interactive terminals are powered by a tiny Python PTY bridge
@@ -131,17 +130,6 @@ interface BridgeEvent {
 function parseQuery(req: http.IncomingMessage): URL {
   const host = req.headers.host || 'localhost';
   return new URL(req.url || '/', `http://${host}`);
-}
-
-function authenticate(token: string | null): JwtPayload | null {
-  if (!token) return null;
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET) as JwtPayload;
-    if (!payload.id || !payload.valid) return null;
-    return payload;
-  } catch {
-    return null;
-  }
 }
 
 function parseConnectParams(url: URL): PtyConnectParams | { error: string } {
@@ -288,20 +276,20 @@ function bridge(ws: WebSocket, child: ChildProcessWithoutNullStreams, label: str
 
 /**
  * Attach a `/ws/pty` upgrade handler to an existing http server.
- * Validates JWT (?token=...), restricts allowed subcommands, then
+ * Validates a short-lived one-time ticket, restricts allowed subcommands, then
  * spawns `python3 pty-bridge.py hermes -p <profile> <cmd>` and proxies
  * the resulting PTY to the WebSocket.
  */
 function attachPtyWebSocket(server: http.Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     const url = parseQuery(req);
     if (url.pathname !== '/ws/pty') return;
 
-    const token = url.searchParams.get('token');
-    if (!authenticate(token)) {
-      console.warn(`[pty] upgrade rejected: invalid token (${url.search ? 'token=…' : 'no token'})`);
+    const ticket = url.searchParams.get('ticket');
+    if (!consumePtyTicket(ticket)) {
+      console.warn('[pty] upgrade rejected: invalid or expired ticket');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
