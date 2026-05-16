@@ -61,15 +61,12 @@ npm start
 
 > **Note:** API Docs (Swagger) are only available in development mode (`npm run dev`).
 
-## First Login
+## Default Login
 
-On first startup, Hermes Client creates an admin account and writes the bootstrap
-credentials to:
+On first startup, a default admin user is created:
 
-- `~/.hermes_client/bootstrap-admin.txt`
-
-The bootstrap email is `admin@admin.com` and the password is random per install.
-Change it after first login.
+- **Email:** `admin@admin.com`
+- **Password:** `123456`
 
 ## Service Commands
 
@@ -129,7 +126,6 @@ Generated automatically on first run (see `api/.env.example` for reference):
 | `HERMES_BIN`                | resolved automatically     | Override the absolute path to the `hermes` CLI binary          |
 | `HERMES_HOME`               | `~/.hermes`                | Override Hermes home directory                                 |
 | `HERMES_CLIENT_UPLOADS_DIR` | `~/.hermes_client/uploads` | Override where uploaded files are stored on disk               |
-| `HERMES_SINGLE_USER_MODE`   | `1` in production          | Set to `0` to re-enable multi-user management surfaces         |
 
 > **CORS / remote access.** Hermes Client is a single-user local app. By
 > default the API allows every origin and the client derives the API URL

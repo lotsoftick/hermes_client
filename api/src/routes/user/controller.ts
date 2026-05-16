@@ -1,7 +1,7 @@
 import AppDataSource from '../../data-source';
 import { User } from '../../entities';
 import { List, Get, Create, Update, Destroy } from '../../@types/user';
-import { isSingleUserMode } from '../../config/singleUser';
+import isSingleUserMode from '../../config/singleUser';
 
 function singleUserForbidden() {
   return { error: 'User management is disabled in single-user mode' };
