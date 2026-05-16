@@ -5,7 +5,23 @@ import { Agent, Conversation } from '../../entities';
 import { List, Get, Create, Update, Destroy, AgentJson } from '../../@types/agent';
 import * as hermes from '../../services/hermes';
 
-function decorate(agent: Agent, models: Record<string, string | null>): AgentJson {
+/**
+ * Resolve gateway status for a batch of profiles. Each call goes through
+ * the per-profile cache in `hermes/gateway.ts` so this is cheap on warm
+ * paths even though the underlying CLI call is sequential per profile.
+ */
+function getGatewayRunning(profiles: string[]): Record<string, boolean> {
+  return profiles.reduce<Record<string, boolean>>((acc, p) => {
+    acc[p] = hermes.readGatewayStatusCached(p).running;
+    return acc;
+  }, {});
+}
+
+function decorate(
+  agent: Agent,
+  models: Record<string, string | null>,
+  gateways: Record<string, boolean>
+): AgentJson {
   return {
     _id: agent._id,
     name: agent.name,
@@ -15,6 +31,7 @@ function decorate(agent: Agent, models: Record<string, string | null>): AgentJso
     updatedAt: agent.updatedAt,
     model: models[agent.hermesProfile] ?? null,
     exists: hermes.profileExists(agent.hermesProfile),
+    gatewayRunning: gateways[agent.hermesProfile] ?? false,
     dailyCapUsd: agent.dailyCapUsd,
     monthlyCapUsd: agent.monthlyCapUsd,
     allTimeCapUsd: agent.allTimeCapUsd,
@@ -67,8 +84,10 @@ const list: List = async (req, res, next) => {
       )
       .getMany();
 
-    const models = hermes.getProfileModels(items.map((a) => a.hermesProfile));
-    return res.json({ total, items: items.map((a) => decorate(a, models)) });
+    const profiles = items.map((a) => a.hermesProfile);
+    const models = hermes.getProfileModels(profiles);
+    const gateways = getGatewayRunning(profiles);
+    return res.json({ total, items: items.map((a) => decorate(a, models, gateways)) });
   } catch (error) {
     return next(error);
   }
@@ -80,7 +99,8 @@ const get: Get = async (req, res, next) => {
     const agent = await agentRepo.findOneBy({ _id: Number(req.params.id) });
     if (!agent) return res.json(null);
     const models = hermes.getProfileModels([agent.hermesProfile]);
-    return res.json(decorate(agent, models));
+    const gateways = getGatewayRunning([agent.hermesProfile]);
+    return res.json(decorate(agent, models, gateways));
   } catch (error) {
     return next(error);
   }
@@ -105,8 +125,22 @@ const create: Create = async (req, res, next) => {
       createdAt: new Date(),
     });
     const saved = await agentRepo.save(agent);
+
+    // Auto-start the per-profile hermes gateway so the new agent is
+    // immediately reachable by any messenger configured later. Deferred
+    // via setImmediate because startProfileGateway runs blocking
+    // execFileSync calls before its first `await`, which would otherwise
+    // stall the create response for several seconds. The sidebar dot
+    // flips green once the daemon reports loaded on the next poll.
+    setImmediate(() => {
+      hermes.startProfileGateway(saved.hermesProfile).catch(() => {
+        // Swallow: failures are surfaced via the status dot + lifecycle UI.
+      });
+    });
+
     const models = hermes.getProfileModels([saved.hermesProfile]);
-    return res.json(decorate(saved, models));
+    const gateways = getGatewayRunning([saved.hermesProfile]);
+    return res.json(decorate(saved, models, gateways));
   } catch (error) {
     return next(error);
   }
@@ -133,7 +167,8 @@ const update: Update = async (req, res, next) => {
     const agent = await agentRepo.findOneBy({ _id: id });
     if (!agent) return res.status(404).json(null);
     const models = hermes.getProfileModels([agent.hermesProfile]);
-    return res.json(decorate(agent, models));
+    const gateways = getGatewayRunning([agent.hermesProfile]);
+    return res.json(decorate(agent, models, gateways));
   } catch (error) {
     return next(error);
   }
@@ -241,6 +276,32 @@ const patchSessionSettings: RequestHandler = async (req, res, next) => {
   }
 };
 
+/**
+ * Run a gateway lifecycle action against the agent's underlying hermes
+ * profile. The hermes service helpers already invalidate the per-profile
+ * status cache, so the very next agent list/get response will reflect
+ * the new daemon state — no extra plumbing needed here.
+ */
+type GatewayOp = (profile: string) => Promise<{ ok: boolean; error?: string; raw: string }>;
+
+const runGatewayOp =
+  (op: GatewayOp): RequestHandler =>
+  async (req, res, next) => {
+    try {
+      const agentRepo = AppDataSource.getRepository(Agent);
+      const agent = await agentRepo.findOneBy({ _id: Number(req.params.id) });
+      if (!agent) return res.status(404).json({ ok: false, error: 'Agent not found', raw: '' });
+      const result = await op(agent.hermesProfile);
+      return res.status(result.ok ? 200 : 500).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+const gatewayStart = runGatewayOp((profile) => hermes.startProfileGateway(profile));
+const gatewayStop = runGatewayOp(async (profile) => hermes.stopProfileGateway(profile));
+const gatewayRestart = runGatewayOp((profile) => hermes.restartProfileGateway(profile));
+
 export {
   list,
   get,
@@ -250,4 +311,7 @@ export {
   sync,
   getSessionSettings,
   patchSessionSettings,
+  gatewayStart,
+  gatewayStop,
+  gatewayRestart,
 };

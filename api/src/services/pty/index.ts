@@ -72,7 +72,14 @@ function buildChildPath(): string {
 const PTY_BRIDGE = process.env.HERMES_CLIENT_PTY_BRIDGE || findPtyBridge();
 const PYTHON_BIN = resolvePython();
 
-/** Subcommands the user is allowed to launch from the browser. */
+/**
+ * Subcommands the user is allowed to launch from the browser.
+ *
+ * Most entries are single positional args mapped 1:1 (`<cmd>` →
+ * `hermes -p <profile> <cmd>`). Composite commands need a two-token
+ * argv — they're listed here under a hyphenated alias and resolved
+ * by `MULTI_TOKEN_SUBCOMMANDS` below.
+ */
 const ALLOWED_SUBCOMMANDS = new Set([
   'model',
   'login',
@@ -82,7 +89,18 @@ const ALLOWED_SUBCOMMANDS = new Set([
   'profile',
   'doctor',
   'status',
+  'gateway-setup',
 ]);
+
+/**
+ * Aliases that expand into multiple positional args on the hermes
+ * command line. The key is the value passed in `?cmd=` from the
+ * client; the value is the argv we splice in *after* the optional
+ * `-p <profile>` flag.
+ */
+const MULTI_TOKEN_SUBCOMMANDS: Record<string, string[]> = {
+  'gateway-setup': ['gateway', 'setup'],
+};
 
 interface PtyConnectParams {
   /** Hermes profile to scope the command to (`-p <profile>`). */
@@ -130,7 +148,9 @@ function parseConnectParams(url: URL): PtyConnectParams | { error: string } {
 function buildHermesArgs(params: PtyConnectParams): string[] {
   const args: string[] = [];
   if (params.profile && params.profile !== 'default') args.push('-p', params.profile);
-  args.push(params.cmd);
+  const expanded = MULTI_TOKEN_SUBCOMMANDS[params.cmd];
+  if (expanded) args.push(...expanded);
+  else args.push(params.cmd);
   return args;
 }
 

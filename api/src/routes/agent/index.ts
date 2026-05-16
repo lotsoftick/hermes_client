@@ -23,4 +23,8 @@ router
   .patch(auth, validate.update, controller.update)
   .delete(auth, validate.id, controller.destroy);
 
+router.route('/agent/:id(\\d+)/gateway/start').post(auth, validate.id, controller.gatewayStart);
+router.route('/agent/:id(\\d+)/gateway/stop').post(auth, validate.id, controller.gatewayStop);
+router.route('/agent/:id(\\d+)/gateway/restart').post(auth, validate.id, controller.gatewayRestart);
+
 export default router;

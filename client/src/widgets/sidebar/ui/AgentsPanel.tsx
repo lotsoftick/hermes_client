@@ -25,7 +25,13 @@ export default function AgentsPanel({ searchQuery, onNavigate }: AgentsPanelProp
   const [sortAlpha, setSortAlpha] = useState(false);
   const [deletingAgentId] = useState<string | null>(null);
 
-  const { data: agentsData, isLoading: agentsLoading } = useGetAgentsQuery();
+  // Poll so the per-agent gateway status dot reflects the live daemon
+  // state (auto-started on create, restarted via the config drawer,
+  // killed externally, …). Backend caches `gateway status` per profile
+  // for ~15s, so 15s polling roughly aligns with cache expiry.
+  const { data: agentsData, isLoading: agentsLoading } = useGetAgentsQuery(undefined, {
+    pollingInterval: 15000,
+  });
   // Poll so sessions started in a standalone `hermes` REPL show up in
   // the sidebar without a manual refresh. The backend list endpoint
   // discovers new session JSON files on disk on each request.
@@ -179,6 +185,7 @@ export default function AgentsPanel({ searchQuery, onNavigate }: AgentsPanelProp
                   name: agent.name,
                   hermesProfile: agent.hermesProfile,
                   model: agent.model ?? null,
+                  gatewayRunning: agent.gatewayRunning,
                 }}
                 conversations={allConversations.filter((c) => c.agentId === agent._id)}
                 searchQuery={searchQuery || undefined}

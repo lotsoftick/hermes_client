@@ -1,10 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import {
+  Box,
+  Button,
+  CircularProgress,
   Collapse,
+  Divider,
   List,
   ListItem,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
+  Popover,
+  Stack,
   Typography,
   IconButton,
   Tooltip,
@@ -15,17 +24,36 @@ import {
   ExpandMore,
   ExpandLess,
   DeleteOutline,
+  MoreVert,
+  PlayArrow,
+  Replay,
+  Stop,
   TerminalOutlined,
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router';
-import { useDeleteAgentMutation } from '../../../entities/agent';
+import {
+  useDeleteAgentMutation,
+  useStartGatewayMutation,
+  useStopGatewayMutation,
+  useRestartGatewayMutation,
+} from '../../../entities/agent';
 import { useCreateConversationMutation, ConversationItem } from '../../../entities/conversation';
 import { AgentConfigDrawer } from '../../../features/agent/setup';
-import { DeleteButton } from '../../../shared/ui';
 import AgentSpendRing from './AgentSpendRing';
 
 interface AgentSectionProps {
-  agent: { _id: string; name: string; hermesProfile: string; model?: string | null };
+  agent: {
+    _id: string;
+    name: string;
+    hermesProfile: string;
+    model?: string | null;
+    /**
+     * Live hermes-gateway daemon status for this profile. Drives the
+     * red/green status dot rendered before the agent name. Defaults to
+     * `false` when undefined so first paint doesn't lie about uptime.
+     */
+    gatewayRunning?: boolean;
+  };
   conversations: { _id: string; title: string | null; createdAt: string }[];
   searchQuery?: string;
   collapseKey?: number;
@@ -59,9 +87,21 @@ export default function AgentSection({
   }, [collapseKey]);
   const [hovered, setHovered] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  /**
+   * Element that the delete-confirm popover is anchored to. We snapshot
+   * the MoreVert button from `menuAnchor` so the popover can stay open
+   * after the Menu closes and the user's mouse leaves the row.
+   */
+  const [confirmAnchor, setConfirmAnchor] = useState<HTMLElement | null>(null);
+  const menuOpen = Boolean(menuAnchor);
+  const confirmOpen = Boolean(confirmAnchor);
 
   const [createConversation] = useCreateConversationMutation();
-  const [deleteAgent] = useDeleteAgentMutation();
+  const [deleteAgent, { isLoading: deleting }] = useDeleteAgentMutation();
+  const [startGateway] = useStartGatewayMutation();
+  const [stopGateway] = useStopGatewayMutation();
+  const [restartGateway] = useRestartGatewayMutation();
 
   const isSearchActive = Boolean(searchQuery);
   const agentNameMatches = searchQuery
@@ -84,9 +124,21 @@ export default function AgentSection({
 
   const handleDeleteAgent = async () => {
     await deleteAgent(agent._id);
+    setConfirmAnchor(null);
     if (location.pathname.startsWith(`/agent/${agent._id}`)) {
       navigate('/');
     }
+  };
+
+  const openMenu = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    setMenuAnchor(e.currentTarget);
+  };
+  const closeMenu = () => setMenuAnchor(null);
+
+  const runFromMenu = (fn: () => void) => () => {
+    closeMenu();
+    fn();
   };
 
   return (
@@ -119,6 +171,25 @@ export default function AgentSection({
             configured={Boolean(agent.model)}
             onClickWhenUnconfigured={() => setDrawerOpen(true)}
           />
+          <Tooltip
+            title={agent.gatewayRunning ? 'Gateway running' : 'Gateway stopped'}
+            placement="right"
+          >
+            <Box
+              component="span"
+              sx={{
+                width: 5,
+                height: 5,
+                borderRadius: '50%',
+                flexShrink: 0,
+                bgcolor: agent.gatewayRunning ? 'success.main' : 'error.main',
+                opacity: agent.gatewayRunning ? 1 : 0.55,
+                boxShadow: agent.gatewayRunning ? '0 0 5px rgba(76,175,80,0.55)' : 'none',
+                transition: 'background-color 0.2s, opacity 0.2s, box-shadow 0.2s',
+                ml: -0.25,
+              }}
+            />
+          </Tooltip>
           <ListItemText
             primary={agent.name}
             sx={{
@@ -134,46 +205,22 @@ export default function AgentSection({
               },
             }}
           />
-          {hovered && (
-            <>
-              <Tooltip title="Configure profile">
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDrawerOpen(true);
-                  }}
-                  sx={{
-                    p: 0.2,
-                    mr: 0.2,
-                    color: sidebar.text,
-                    opacity: 0.6,
-                    '&:hover': { color: 'primary.main', opacity: 1 },
-                  }}
-                >
-                  <TerminalOutlined sx={{ fontSize: 14 }} />
-                </IconButton>
-              </Tooltip>
-              <DeleteButton
-                onConfirm={handleDeleteAgent}
-                message="Delete this agent and all its conversations?"
-                renderTrigger={(onClick) => (
-                  <IconButton
-                    size="small"
-                    onClick={onClick}
-                    sx={{
-                      p: 0.2,
-                      mr: 0.2,
-                      color: sidebar.text,
-                      opacity: 0.6,
-                      '&:hover': { color: '#f44336', opacity: 1 },
-                    }}
-                  >
-                    <DeleteOutline sx={{ fontSize: 14 }} />
-                  </IconButton>
-                )}
-              />
-            </>
+          {(hovered || menuOpen || confirmOpen) && (
+            <Tooltip title="Agent actions">
+              <IconButton
+                size="small"
+                onClick={openMenu}
+                sx={{
+                  p: 0.2,
+                  mr: 0.2,
+                  color: sidebar.text,
+                  opacity: menuOpen || confirmOpen ? 1 : 0.6,
+                  '&:hover': { color: 'primary.main', opacity: 1 },
+                }}
+              >
+                <MoreVert sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
           )}
           <IconButton
             size="small"
@@ -225,6 +272,141 @@ export default function AgentSection({
           onClose={() => setDrawerOpen(false)}
         />
       )}
+      <Menu
+        anchorEl={menuAnchor}
+        open={menuOpen}
+        onClose={closeMenu}
+        onClick={(e) => e.stopPropagation()}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{
+          paper: {
+            sx: {
+              minWidth: 180,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+              '& .MuiMenuItem-root': { fontSize: '0.8rem', py: 0.6 },
+              '& .MuiListItemIcon-root': { minWidth: 28, color: 'inherit' },
+              '& .MuiSvgIcon-root': { fontSize: 16 },
+            },
+          },
+        }}
+      >
+        <MenuItem onClick={runFromMenu(() => setDrawerOpen(true))}>
+          <ListItemIcon>
+            <TerminalOutlined />
+          </ListItemIcon>
+          Configure profile
+        </MenuItem>
+        <Divider sx={{ my: 0.3 }} />
+        <MenuItem
+          disabled={agent.gatewayRunning === true}
+          onClick={runFromMenu(() => {
+            startGateway(agent._id);
+          })}
+        >
+          <ListItemIcon>
+            <PlayArrow sx={{ color: 'success.main' }} />
+          </ListItemIcon>
+          Start gateway
+        </MenuItem>
+        <MenuItem
+          onClick={runFromMenu(() => {
+            restartGateway(agent._id);
+          })}
+        >
+          <ListItemIcon>
+            <Replay />
+          </ListItemIcon>
+          Restart gateway
+        </MenuItem>
+        <MenuItem
+          disabled={agent.gatewayRunning !== true}
+          onClick={runFromMenu(() => {
+            stopGateway(agent._id);
+          })}
+        >
+          <ListItemIcon>
+            <Stop sx={{ color: 'warning.main' }} />
+          </ListItemIcon>
+          Stop gateway
+        </MenuItem>
+        <Divider sx={{ my: 0.3 }} />
+        <MenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            // Snapshot the MoreVert button as the popover anchor BEFORE
+            // closing the menu — closeMenu clears `menuAnchor` itself.
+            setConfirmAnchor(menuAnchor);
+            closeMenu();
+          }}
+          sx={{ color: 'error.main' }}
+        >
+          <ListItemIcon sx={{ color: 'error.main' }}>
+            <DeleteOutline />
+          </ListItemIcon>
+          Delete profile
+        </MenuItem>
+      </Menu>
+      <Popover
+        open={confirmOpen}
+        anchorEl={confirmAnchor}
+        onClose={() => !deleting && setConfirmAnchor(null)}
+        onClick={(e) => e.stopPropagation()}
+        anchorOrigin={{ vertical: 'center', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'center', horizontal: 'left' }}
+        slotProps={{
+          paper: {
+            sx: {
+              py: 0.8,
+              px: 1.5,
+              ml: 1.5,
+              borderRadius: 2,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
+              overflow: 'visible',
+              '&::before': {
+                content: '""',
+                position: 'absolute',
+                top: '50%',
+                left: -5,
+                transform: 'translateY(-50%)',
+                width: 0,
+                height: 0,
+                borderTop: '6px solid transparent',
+                borderBottom: '6px solid transparent',
+                borderRight: '6px solid',
+                borderRightColor: 'background.paper',
+              },
+            },
+          },
+        }}
+      >
+        <Typography variant="caption" sx={{ whiteSpace: 'nowrap', fontSize: '0.75rem' }}>
+          Delete this agent and its hermes profile?
+        </Typography>
+        <Stack direction="row" spacing={0.5}>
+          <Button
+            size="small"
+            onClick={() => setConfirmAnchor(null)}
+            disabled={deleting}
+            sx={{ minWidth: 0, px: 1, py: 0.2, fontSize: '0.7rem' }}
+          >
+            No
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={handleDeleteAgent}
+            disabled={deleting}
+            sx={{ minWidth: 0, px: 1, py: 0.2, fontSize: '0.7rem' }}
+          >
+            {deleting ? <CircularProgress size={12} color="inherit" /> : 'Yes'}
+          </Button>
+        </Stack>
+      </Popover>
     </>
   );
 }

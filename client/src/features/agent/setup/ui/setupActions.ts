@@ -11,6 +11,12 @@ export interface SetupAction {
 /**
  * Per-profile configuration entry points exposed in the UI. Order matters —
  * the most useful step for a freshly-created profile is first.
+ *
+ * The list is intentionally narrow: the rest of Hermes's CLI surface
+ * (`login`, `auth`, `config`, `doctor`, `setup`, …) is still accepted by
+ * the PTY allowlist on the server, but exposing every subcommand here
+ * overwhelms the operator. We keep the picks that map to dedicated UI
+ * flows and surface everything else via a real terminal session.
  */
 export const SETUP_ACTIONS: SetupAction[] = [
   {
@@ -21,33 +27,10 @@ export const SETUP_ACTIONS: SetupAction[] = [
     recommended: true,
   },
   {
-    cmd: 'login',
-    label: 'Sign in to provider',
-    hint: 'hermes login',
-    description: 'Run an OAuth login for the selected inference provider.',
-  },
-  {
-    cmd: 'auth',
-    label: 'Manage credentials',
-    hint: 'hermes auth',
-    description: 'Add, list, or remove pooled credentials for this profile.',
-  },
-  {
-    cmd: 'config',
-    label: 'Edit profile config',
-    hint: 'hermes config',
-    description: 'View or edit the profile’s config.yaml from a guided prompt.',
-  },
-  {
-    cmd: 'doctor',
-    label: 'Run doctor',
-    hint: 'hermes doctor',
-    description: 'Check that everything is wired up correctly for this profile.',
-  },
-  {
-    cmd: 'setup',
-    label: 'Full setup wizard',
-    hint: 'hermes setup',
-    description: 'Run the complete Hermes setup wizard. Affects global Hermes state.',
+    cmd: 'gateway-setup',
+    label: 'Configure channel',
+    hint: 'hermes gateway setup',
+    description:
+      'Interactively connect a messenger (Telegram, Discord, WhatsApp, Slack, …) to this agent.',
   },
 ];

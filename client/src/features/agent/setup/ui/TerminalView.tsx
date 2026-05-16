@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { API_BASE_URL } from '../../../../shared/api';
-import type { HermesSubcommand } from './SetupTerminal';
+import { formatHermesCmd, type HermesSubcommand } from './cmd';
 
 export type TerminalStatus = 'connecting' | 'connected' | 'closed' | 'error';
 
@@ -69,7 +69,12 @@ function isLightColor(hex: string): boolean {
   return 0.299 * r + 0.587 * g + 0.114 * b > 160;
 }
 
-async function buildWsUrl(profile: string, cmd: string, cols: number, rows: number): Promise<string | null> {
+async function buildWsUrl(
+  profile: string,
+  cmd: string,
+  cols: number,
+  rows: number
+): Promise<string | null> {
   const token = localStorage.getItem('token');
   if (!token) return null;
   const ticketRes = await fetch(`${API_BASE_URL}/auth/ws-ticket`, {
@@ -169,10 +174,10 @@ export default function TerminalView({
     // "muted" and "error" lines that contrast properly against the bg.
     const rgbFromHex = (hex: string): [number, number, number] => {
       const m = hex.replace('#', '');
-      const expand = (s: string): number =>
-        parseInt(s.length === 1 ? s + s : s, 16);
+      const expand = (s: string): number => parseInt(s.length === 1 ? s + s : s, 16);
       if (m.length === 3) return [expand(m[0]), expand(m[1]), expand(m[2])];
-      if (m.length === 6) return [expand(m.slice(0, 2)), expand(m.slice(2, 4)), expand(m.slice(4, 6))];
+      if (m.length === 6)
+        return [expand(m.slice(0, 2)), expand(m.slice(2, 4)), expand(m.slice(4, 6))];
       return [136, 136, 136];
     };
     const sgrTrueColor = (rgb: [number, number, number]): string =>
@@ -182,7 +187,7 @@ export default function TerminalView({
     const reset = '\x1b[0m';
 
     emit('connecting');
-    term.writeln(`${muted}$ hermes -p ${profile} ${cmd}${reset}\r\n`);
+    term.writeln(`${muted}$ hermes -p ${profile} ${formatHermesCmd(cmd)}${reset}\r\n`);
     let disposed = false;
     let ws: WebSocket | null = null;
 
