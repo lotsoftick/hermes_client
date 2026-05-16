@@ -75,7 +75,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           position: 'absolute',
           top: 0,
           right: 0,
-          width: 4,
+          width: 2,
           height: '100%',
           cursor: 'col-resize',
           zIndex: 10,
