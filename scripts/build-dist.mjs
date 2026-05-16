@@ -32,6 +32,14 @@ const MIME = {
 // old bundles. Everything else can use the default (immutable hashed names).
 const NO_CACHE_FILES = new Set(['sw.js', 'registerSW.js', 'workbox-window.prod.es5.mjs']);
 
+// X-Forwarded-* headers are spoofable by any caller that can reach this
+// server, so we ignore them by default and only honor them when the
+// operator has explicitly placed this process behind a trusted reverse
+// proxy. Mirrors Express's \`app.set('trust proxy')\` opt-in semantics.
+const TRUST_PROXY = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.HERMES_TRUST_PROXY || '').toLowerCase()
+);
+
 function firstHeader(value) {
   return Array.isArray(value) ? value[0] : (value || '');
 }
@@ -45,9 +53,13 @@ function hostToHostname(host) {
 }
 
 function injectRuntimeConfig(html, headers) {
-  const forwardedProto = firstHeader(headers['x-forwarded-proto']).split(',')[0].trim();
+  const forwardedProto = TRUST_PROXY
+    ? firstHeader(headers['x-forwarded-proto']).split(',')[0].trim()
+    : '';
   const protocol = forwardedProto || 'http';
-  const forwardedHost = firstHeader(headers['x-forwarded-host']).split(',')[0].trim();
+  const forwardedHost = TRUST_PROXY
+    ? firstHeader(headers['x-forwarded-host']).split(',')[0].trim()
+    : '';
   const host = forwardedHost || firstHeader(headers.host).trim() || 'localhost';
   const hostname = hostToHostname(host);
   const apiBaseUrl = protocol + '://' + hostname + ':' + API_PORT + '/api';
