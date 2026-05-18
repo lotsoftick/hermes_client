@@ -4,6 +4,7 @@ import { CircularProgress, Box } from '@mui/material';
 
 const Login = lazy(() => import('../pages/login'));
 const PrivateRoute = lazy(() => import('../features/auth/PrivateRoute'));
+const Account = lazy(() => import('../pages/account'));
 const Users = lazy(() => import('../pages/user'));
 const AgentChat = lazy(() => import('../pages/agent'));
 const AgentSettings = lazy(() => import('../pages/agentSettings'));
@@ -38,6 +39,14 @@ function App() {
           </Suspense>
         }
       >
+        <Route
+          path="account"
+          element={
+            <Suspense fallback={<Loading />}>
+              <Account />
+            </Suspense>
+          }
+        />
         <Route
           path="users"
           element={

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, useTheme } from '@mui/material';
-import { People, Extension, Psychology, Schedule } from '@mui/icons-material';
+import { Extension, Psychology, Schedule, Person, People } from '@mui/icons-material';
 import { Link, useLocation } from 'react-router';
+import { useGetMeQuery } from '../../../features/auth/api';
 
 interface MenuItem {
   text: string;
@@ -9,8 +10,19 @@ interface MenuItem {
   path: string;
 }
 
-const MENU_ITEMS: MenuItem[] = [
-  { text: 'USERS', icon: <People sx={{ fontSize: 18 }} />, path: '/users' },
+const ACCOUNT_ITEM: MenuItem = {
+  text: 'ACCOUNT',
+  icon: <Person sx={{ fontSize: 18 }} />,
+  path: '/account',
+};
+
+const USERS_ITEM: MenuItem = {
+  text: 'USERS',
+  icon: <People sx={{ fontSize: 18 }} />,
+  path: '/users',
+};
+
+const STATIC_ITEMS: MenuItem[] = [
   { text: 'PLUGINS', icon: <Extension sx={{ fontSize: 18 }} />, path: '/plugins' },
   { text: 'SKILLS', icon: <Psychology sx={{ fontSize: 18 }} />, path: '/skills' },
   { text: 'CRON', icon: <Schedule sx={{ fontSize: 18 }} />, path: '/cron' },
@@ -23,10 +35,22 @@ interface SidebarMenuProps {
 export default function SidebarMenu({ onNavigate }: SidebarMenuProps) {
   const location = useLocation();
   const { sidebar } = useTheme().palette;
+  // `useGetMeQuery` is also called by `PrivateRoute`, so this hits the
+  // RTK Query cache instead of firing a second request. While the value
+  // is loading we surface neither entry — flipping a label mid-render
+  // would be jumpier than a one-tick gap.
+  const { data: me } = useGetMeQuery();
+  const accountEntry: MenuItem | null =
+    me?.singleUserMode === true
+      ? ACCOUNT_ITEM
+      : me?.singleUserMode === false
+        ? USERS_ITEM
+        : null;
+  const items: MenuItem[] = accountEntry ? [accountEntry, ...STATIC_ITEMS] : STATIC_ITEMS;
 
   return (
     <List sx={{ px: 2, py: 0, flexShrink: 0 }}>
-      {MENU_ITEMS.map((item) => {
+      {items.map((item) => {
         const isSelected =
           location.pathname === item.path || location.pathname.startsWith(item.path + '/');
         return (

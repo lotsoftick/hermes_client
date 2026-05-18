@@ -10,6 +10,7 @@ export type UserResponse = {
   active: boolean;
   createdAt: Date | string;
   updatedAt: Date | string | null;
+  singleUserMode?: boolean;
 };
 
 export type UserRequestBody = {

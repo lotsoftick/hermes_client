@@ -1,9 +1,17 @@
 import AppDataSource from '../../data-source';
 import { User } from '../../entities';
 import { List, Get, Create, Update, Destroy } from '../../@types/user';
+import isSingleUserMode from '../../config/singleUser';
+
+function singleUserForbidden() {
+  return { error: 'User management is disabled in single-user mode' };
+}
 
 const list: List = async (req, res, next) => {
   try {
+    if (isSingleUserMode()) {
+      return res.json({ total: 1, items: [req.user!] });
+    }
     const { page = 0, limit = 40, sortField = 'createdAt', sortType = 'desc' } = req.query;
     const userRepo = AppDataSource.getRepository(User);
 
@@ -39,8 +47,12 @@ const list: List = async (req, res, next) => {
 
 const get: Get = async (req, res, next) => {
   try {
+    const id = Number(req.params.id);
+    if (isSingleUserMode() && id !== req.user!._id) {
+      return res.status(403).json(singleUserForbidden() as never);
+    }
     const userRepo = AppDataSource.getRepository(User);
-    const user = await userRepo.findOneBy({ _id: Number(req.params.id) });
+    const user = await userRepo.findOneBy({ _id: id });
     if (!user) return res.json(null);
     const { password, deletedAt, ...rest } = user;
     return res.json(rest);
@@ -51,6 +63,9 @@ const get: Get = async (req, res, next) => {
 
 const create: Create = async (req, res, next) => {
   try {
+    if (isSingleUserMode()) {
+      return res.status(403).json(singleUserForbidden() as never);
+    }
     const userRepo = AppDataSource.getRepository(User);
     const user = userRepo.create({
       ...req.body,
@@ -69,6 +84,10 @@ const update: Update = async (req, res, next) => {
     const userRepo = AppDataSource.getRepository(User);
     const id = Number(req.params.id);
 
+    if (isSingleUserMode() && id !== req.user!._id) {
+      return res.status(403).json(singleUserForbidden() as never);
+    }
+
     const user = await userRepo.findOneBy({ _id: id });
     if (!user) return res.json(null);
 
@@ -83,6 +102,9 @@ const update: Update = async (req, res, next) => {
 
 const destroy: Destroy = async (req, res, next) => {
   try {
+    if (isSingleUserMode()) {
+      return res.status(403).json(singleUserForbidden() as never);
+    }
     if (Number(req.params.id) === req.user!._id) {
       return res.status(400).json({ error: 'You cannot delete your own account' });
     }

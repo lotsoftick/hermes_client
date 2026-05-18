@@ -122,8 +122,10 @@ export default defineConfig(({ mode }) => {
           // (https://github.com/GoogleChrome/workbox/issues/3245). The SW is
           // already small (<20KB), so skipping minification is a safe tradeoff.
           mode: 'development',
-          // Precache static build output (JS, CSS, HTML, fonts).
-          globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+          // Precache static build output (JS, CSS, fonts, images) but keep
+          // index.html network-only so serve.mjs can inject fresh runtime config.
+          globPatterns: ['**/*.{js,css,svg,png,ico,woff2}'],
+          globIgnores: ['**/index.html'],
           // The main app bundle currently weighs ~3.4MB unminified due to MUI + markdown.
           // 6MB headroom avoids nuisance build failures when it grows slightly.
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,

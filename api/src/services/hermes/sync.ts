@@ -180,6 +180,7 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
   const convRepo = AppDataSource.getRepository(Conversation);
   const linked = await convRepo.find({
     where: { agentId: agent._id, sessionKey: In(sessionIds) },
+    withDeleted: true,
   });
   const linkedKeys = new Set(linked.map((c) => c.sessionKey).filter((x): x is string => !!x));
 
@@ -206,15 +207,11 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
           created.push(saved);
           await syncConversationFromHermes(saved, agent);
         } catch (err) {
-          // If the chat controller raced us and bound this session to a
-          // conversation in the meantime, the unique index will reject the
-          // insert. Treat that as success — the row exists, just not under
-          // our hand.
-          // eslint-disable-next-line no-console -- surfacing non-fatal import races for operators
-          console.warn(
-            `[sync] failed to import session ${file.id} for ${agent.hermesProfile}:`,
-            (err as Error).message
-          );
+          // If the chat controller raced us, or a soft-deleted conversation
+          // still owns this sessionKey, the unique index rejects the insert.
+          // Treat that as already linked so discovery stays quiet and idempotent.
+          if (err instanceof QueryFailedError && isSqliteUniqueConstraint(err)) return;
+          throw err;
         }
       }),
     Promise.resolve()

@@ -69,13 +69,25 @@ function isLightColor(hex: string): boolean {
   return 0.299 * r + 0.587 * g + 0.114 * b > 160;
 }
 
-function buildWsUrl(profile: string, cmd: string, cols: number, rows: number): string | null {
+async function buildWsUrl(
+  profile: string,
+  cmd: string,
+  cols: number,
+  rows: number
+): Promise<string | null> {
   const token = localStorage.getItem('token');
   if (!token) return null;
+  const ticketRes = await fetch(`${API_BASE_URL}/auth/ws-ticket`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!ticketRes.ok) return null;
+  const body = (await ticketRes.json()) as { ticket?: string };
+  if (!body.ticket) return null;
   const apiUrl = new URL(API_BASE_URL);
   const proto = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   const u = new URL(`${proto}//${apiUrl.host}/ws/pty`);
-  u.searchParams.set('token', token);
+  u.searchParams.set('ticket', body.ticket);
   u.searchParams.set('profile', profile);
   u.searchParams.set('cmd', cmd);
   u.searchParams.set('cols', String(cols));
@@ -162,10 +174,10 @@ export default function TerminalView({
     // "muted" and "error" lines that contrast properly against the bg.
     const rgbFromHex = (hex: string): [number, number, number] => {
       const m = hex.replace('#', '');
-      const expand = (s: string): number =>
-        parseInt(s.length === 1 ? s + s : s, 16);
+      const expand = (s: string): number => parseInt(s.length === 1 ? s + s : s, 16);
       if (m.length === 3) return [expand(m[0]), expand(m[1]), expand(m[2])];
-      if (m.length === 6) return [expand(m.slice(0, 2)), expand(m.slice(2, 4)), expand(m.slice(4, 6))];
+      if (m.length === 6)
+        return [expand(m.slice(0, 2)), expand(m.slice(2, 4)), expand(m.slice(4, 6))];
       return [136, 136, 136];
     };
     const sgrTrueColor = (rgb: [number, number, number]): string =>
@@ -174,67 +186,67 @@ export default function TerminalView({
     const errorColor = sgrTrueColor(lightBg ? [183, 28, 28] : [255, 99, 99]);
     const reset = '\x1b[0m';
 
-    const url = buildWsUrl(profile, cmd, term.cols || 100, term.rows || 30);
-    if (!url) {
-      term.writeln(`${errorColor}Not signed in. Cannot open terminal.${reset}`);
-      emit('error');
-      return () => {
-        term.dispose();
-      };
-    }
-
     emit('connecting');
     term.writeln(`${muted}$ hermes -p ${profile} ${formatHermesCmd(cmd)}${reset}\r\n`);
+    let disposed = false;
+    let ws: WebSocket | null = null;
 
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = () => {
-      emit('connected');
-      try {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      } catch {
-        /* ignore */
-      }
-    };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'exit') {
-            const code = typeof msg.exitCode === 'number' ? msg.exitCode : null;
-            emit('closed', code);
-            term.writeln(
-              `\r\n${muted}[process exited${code !== null ? ` with code ${code}` : ''}]${reset}`
-            );
-            return;
-          }
-          if (msg.type === 'error') {
-            term.writeln(`\r\n${errorColor}${msg.error}${reset}`);
-            emit('error');
-            return;
-          }
-        } catch {
-          term.write(ev.data);
-        }
+    void (async () => {
+      const url = await buildWsUrl(profile, cmd, term.cols || 100, term.rows || 30);
+      if (disposed) return;
+      if (!url) {
+        term.writeln(`${errorColor}Not signed in. Cannot open terminal.${reset}`);
+        emit('error');
         return;
       }
-      term.write(new Uint8Array(ev.data));
-    };
-    ws.onclose = (ev) => {
-      // ws.onclose may fire after we already saw an explicit `exit` event;
-      // distinguish refused connections from clean closes by inspecting the
-      // ready state path.
-      if (ev.code === 1000) return;
-      term.writeln(
-        `\r\n${errorColor}Connection closed (code ${ev.code}). The API may not be running, or your session expired.${reset}`
-      );
-      emit('error');
-    };
-    ws.onerror = () => emit('error');
+
+      ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        emit('connected');
+        try {
+          ws?.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        } catch {
+          /* ignore */
+        }
+      };
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'exit') {
+              const code = typeof msg.exitCode === 'number' ? msg.exitCode : null;
+              emit('closed', code);
+              term.writeln(
+                `\r\n${muted}[process exited${code !== null ? ` with code ${code}` : ''}]${reset}`
+              );
+              return;
+            }
+            if (msg.type === 'error') {
+              term.writeln(`\r\n${errorColor}${msg.error}${reset}`);
+              emit('error');
+              return;
+            }
+          } catch {
+            term.write(ev.data);
+          }
+          return;
+        }
+        term.write(new Uint8Array(ev.data));
+      };
+      ws.onclose = (ev) => {
+        if (ev.code === 1000) return;
+        term.writeln(
+          `\r\n${errorColor}Connection closed (code ${ev.code}). The API may not be running, or your session expired.${reset}`
+        );
+        emit('error');
+      };
+      ws.onerror = () => emit('error');
+    })();
 
     const onData = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
@@ -242,7 +254,7 @@ export default function TerminalView({
     const sendResize = (): void => {
       try {
         fit.fit();
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
         }
       } catch {
@@ -253,10 +265,11 @@ export default function TerminalView({
     ro.observe(container);
 
     return () => {
+      disposed = true;
       onData.dispose();
       ro.disconnect();
       try {
-        ws.close();
+        ws?.close();
       } catch {
         /* ignore */
       }

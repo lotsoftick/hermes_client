@@ -27,6 +27,12 @@ export function isValidSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
 }
 
+export function sessionExists(profile: string | undefined | null, sessionId: string): boolean {
+  if (!isValidSessionId(sessionId)) return false;
+  const file = path.join(profileSessionsDir(profile), `session_${sessionId}.json`);
+  return fs.existsSync(file);
+}
+
 /**
  * Parse `hermes sessions list --source <src>` table output. Columns:
  *   Title, Preview, Last Active, ID

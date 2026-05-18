@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { ChildProcessWithoutNullStreams } from 'child_process';
 import { hermesSpawn, stripAnsi } from './cli';
-import { findLatestClientSession, isValidSessionId, SESSION_SOURCE } from './sessions';
+import { findLatestClientSession, isValidSessionId, sessionExists, SESSION_SOURCE } from './sessions';
 import { cleanAssistantMessageText } from './textCleanup';
 
 export interface ChatOptions {
@@ -26,8 +26,12 @@ const SESSION_ID_LINE_RE = /(?:Session(?:\s*ID)?|session_id)\s*[:=]\s*(\d{8}_\d{
 
 function buildArgs(message: string, opts: ChatOptions): string[] {
   const args = ['chat', '-Q', '--source', SESSION_SOURCE, '-q', message];
-  if (opts.sessionId && isValidSessionId(opts.sessionId)) {
-    args.push('--resume', opts.sessionId);
+  const resumeSessionId =
+    opts.sessionId && isValidSessionId(opts.sessionId) && sessionExists(opts.profile ?? null, opts.sessionId)
+      ? opts.sessionId
+      : null;
+  if (resumeSessionId) {
+    args.push('--resume', resumeSessionId);
   }
   (opts.imagePaths ?? []).forEach((img) => {
     args.push('--image', img);
@@ -68,6 +72,10 @@ export function streamChat(
 
   const startedAtMs = Date.now();
   const args = buildArgs(message, opts);
+  const resumeSessionId =
+    opts.sessionId && isValidSessionId(opts.sessionId) && sessionExists(opts.profile ?? null, opts.sessionId)
+      ? opts.sessionId
+      : null;
   let child: ChildProcessWithoutNullStreams;
   try {
     child = hermesSpawn(args, { profile: opts.profile ?? null });
@@ -82,7 +90,7 @@ export function streamChat(
   }
 
   let aggregated = '';
-  let resolvedSessionId: string | null = opts.sessionId ?? null;
+  let resolvedSessionId: string | null = resumeSessionId;
   let stderrBuf = '';
   let clientClosed = false;
   // When resuming, Hermes prefixes stdout with a `↻ Resumed session …`
@@ -90,7 +98,7 @@ export function streamChat(
   // what we forward to the SSE stream — buffering the very first chunks
   // until either the banner has been emitted (and chopped off) or we've
   // accumulated enough characters to know it isn't there.
-  const expectsResumeBanner = !!opts.sessionId;
+  const expectsResumeBanner = !!resumeSessionId;
   let preambleBuf = '';
   let preambleStripped = !expectsResumeBanner;
   const PREAMBLE_CAP = 512;

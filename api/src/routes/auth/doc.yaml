@@ -14,6 +14,37 @@ paths:
           $ref: '#/components/responses/500'
         401:
           $ref: '#/components/responses/401'
+  /auth/ws-ticket:
+    post:
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      operationId: createPtyTicket
+      summary: Issue a one-time ticket for a `/ws/pty` upgrade
+      description: |
+        The PTY WebSocket endpoint cannot use the `Authorization` header
+        because the browser `WebSocket` constructor does not let callers
+        set arbitrary headers. Instead, the client exchanges its bearer
+        token here for a short-lived single-use ticket and passes it as
+        `?ticket=…` on the WebSocket upgrade request.
+
+        - **TTL:** ~60 seconds from issue.
+        - **Single-use:** consumed on the first `/ws/pty` upgrade attempt;
+          subsequent uses return 401.
+        - **Scope:** the ticket is bound to the user that minted it; the
+          PTY upgrade reuses that user id without re-validating the JWT.
+      responses:
+        200:
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/wsTicketRes'
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
   /auth/login:
     post:
       tags:
@@ -118,6 +149,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        singleUserMode:
+          type: boolean
+          description: |
+            Mirrors `HERMES_SINGLE_USER_MODE` on the server. Returned alongside
+            the signed-in user so the client can decide between the multi-user
+            "Users" admin view and the single-user "Account" self-edit view
+            without a separate config call.
     #
     loginReqBody:
       type: object
@@ -132,3 +170,15 @@ components:
         password:
           type: string
           example: '123456'
+    #
+    wsTicketRes:
+      type: object
+      required:
+        - ticket
+      properties:
+        ticket:
+          type: string
+          description: |
+            Opaque base64url string (~32 chars). Pass as `?ticket=…` on
+            the `/ws/pty` upgrade request. Single-use, ~60s TTL.
+          example: 'k7Z9W3xQbN2mPqR4tY6vX8aE1cFgJhKl'
