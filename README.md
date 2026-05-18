@@ -114,18 +114,19 @@ npm run dev                 # development
 
 Generated automatically on first run (see `api/.env.example` for reference):
 
-| Variable                    | Default                    | Description                                                    |
-| --------------------------- | -------------------------- | -------------------------------------------------------------- |
-| `NODE_ENV`                  | `development`              | Environment mode                                               |
-| `JWT_SECRET`                | _(random)_                 | Secret for JWT signing (also authenticates `/ws/pty` upgrades) |
-| `DB_PATH`                   | `./data/hermes.sqlite`     | Path to SQLite database file                                   |
-| `PORT`                      | _(API_PORT)_               | API listen port (driven by `~/.hermes_client/.env`)            |
-| `ALLOWED_DOMAIN`            | _(unset — allow all)_      | CORS allowlist, comma-separated; only enforced when `HERMES_STRICT_CORS=1` |
-| `HERMES_STRICT_CORS`        | _(off)_                    | Set to `1` to reject any origin not in `ALLOWED_DOMAIN`        |
-| `API_PUBLIC_URL`            | _(derived from request)_   | Optional fallback origin for upload URLs when no `Host` header |
-| `HERMES_BIN`                | resolved automatically     | Override the absolute path to the `hermes` CLI binary          |
-| `HERMES_HOME`               | `~/.hermes`                | Override Hermes home directory                                 |
-| `HERMES_CLIENT_UPLOADS_DIR` | `~/.hermes_client/uploads` | Override where uploaded files are stored on disk               |
+| Variable                    | Default                    | Description                                                                                                                      |
+| --------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                  | `development`              | Environment mode                                                                                                                 |
+| `JWT_SECRET`                | _(random)_                 | Secret for JWT signing (also authenticates `/ws/pty` upgrades)                                                                   |
+| `DB_PATH`                   | `./data/hermes.sqlite`     | Path to SQLite database file                                                                                                     |
+| `PORT`                      | _(API_PORT)_               | API listen port (driven by `~/.hermes_client/.env`)                                                                              |
+| `ALLOWED_DOMAIN`            | _(unset — allow all)_      | CORS allowlist, comma-separated; only enforced when `HERMES_STRICT_CORS=1`                                                       |
+| `HERMES_STRICT_CORS`        | _(off)_                    | Set to `1` to reject any origin not in `ALLOWED_DOMAIN`                                                                          |
+| `API_PUBLIC_URL`            | _(derived from request)_   | Optional fallback origin for upload URLs when no `Host` header                                                                   |
+| `HERMES_BIN`                | resolved automatically     | Override the absolute path to the `hermes` CLI binary                                                                            |
+| `HERMES_HOME`               | `~/.hermes`                | Override Hermes home directory                                                                                                   |
+| `HERMES_CLIENT_UPLOADS_DIR` | `~/.hermes_client/uploads` | Override where uploaded files are stored on disk                                                                                 |
+| `HERMES_SINGLE_USER_MODE`   | `1` in prod, `0` otherwise | Lock the UI to a single-user `Account` self-edit page (no multi-user `Users` admin); accepts `1/true/yes/on` or `0/false/no/off` |
 
 > **CORS / remote access.** Hermes Client is a single-user local app. By
 > default the API allows every origin and the client derives the API URL
