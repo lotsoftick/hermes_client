@@ -7,6 +7,7 @@ import path from 'path';
 import { URL } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { HERMES_BIN } from '../hermes/paths';
+import { hermesSpawnIds } from '../hermes/cli';
 import { consumePtyTicket } from './tickets';
 
 /**
@@ -320,6 +321,11 @@ function attachPtyWebSocket(server: http.Server): void {
             LINES: String(params.rows ?? 30),
             PATH: buildChildPath(),
           },
+          // Drop privileges to the hermes user in the official Docker
+          // image. The pty-bridge will exec `hermes` as that uid, so any
+          // .env files / state it writes under HERMES_HOME stay owned by
+          // the same user that runs the gateway daemon.
+          ...hermesSpawnIds(),
         });
       } catch (err) {
         const message = (err as Error).message || String(err);

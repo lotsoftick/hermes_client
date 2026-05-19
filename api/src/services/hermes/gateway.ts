@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import {
   closeSync,
   existsSync,
@@ -10,8 +10,15 @@ import {
 } from 'fs';
 import os from 'os';
 import path from 'path';
-import { hermesExec, stripAnsi, withProfile } from './cli';
-import { HERMES_BIN } from './paths';
+import {
+  getHermesUserIds,
+  hermesExec,
+  hermesSpawnIds,
+  isContainer,
+  stripAnsi,
+  withProfile,
+} from './cli';
+import { HERMES_BIN, profileHome } from './paths';
 
 /**
  * In-memory cache for `gateway status` results, keyed by profile name.
@@ -81,14 +88,6 @@ function profileFlag(profile: string): string | null {
 // `hermes -p <profile> gateway run` as a detached child, track the PID
 // under ~/.hermes_client/gateway-pids, and reap it on stop.
 
-function isContainer(): boolean {
-  try {
-    return existsSync('/.dockerenv') || existsSync('/run/.containerenv');
-  } catch {
-    return false;
-  }
-}
-
 const CONTAINER_PID_DIR = path.join(os.homedir(), '.hermes_client', 'gateway-pids');
 const CONTAINER_LOG_DIR = path.join(os.homedir(), '.hermes_client', 'gateway-logs');
 
@@ -148,42 +147,30 @@ function readLogTail(profile: string, lines: number): string {
 }
 
 /**
- * Look up the `hermes` user in `/etc/passwd`. The official hermes-agent
- * Docker image creates this user and runs the entrypoint as them; the
- * hermes binary itself refuses to run as root inside that image. When we
- * spawn the gateway from the API (which runs as root), we need to drop
- * privileges to this user so hermes will actually start.
+ * One-time repair: chown the profile dir to the `hermes` user when we're
+ * running root-inside-the-container. Earlier releases ran hermes as root
+ * (because the API daemon does), which produced root-owned files under
+ * HERMES_HOME that the hermes-user gateway can't read. Fixing them on
+ * gateway start lets people upgrade without manual `chown` steps.
  *
- * Returns `null` outside the Docker image (no hermes user → no drop).
+ * No-op outside the Docker image, when not root, or when the profile dir
+ * doesn't exist yet (a brand-new agent created post-fix has nothing to
+ * repair).
  */
-function getHermesUserIds(): { uid: number; gid: number } | null {
-  let passwd: string;
-  try {
-    passwd = readFileSync('/etc/passwd', 'utf-8');
-  } catch {
-    return null;
-  }
-  const line = passwd.split('\n').find((l) => l.startsWith('hermes:'));
-  if (!line) return null;
-  const parts = line.split(':');
-  if (parts.length < 4) return null;
-  const uid = Number.parseInt(parts[2], 10);
-  const gid = Number.parseInt(parts[3], 10);
-  if (!Number.isFinite(uid) || !Number.isFinite(gid)) return null;
-  return { uid, gid };
-}
-
-/**
- * Build the privilege-drop options for `spawn`. Returns an empty object
- * unless we're root inside a container with a `hermes` user — in every
- * other environment the spawn runs as the current user.
- */
-function gatewaySpawnIds(): { uid: number; gid: number } | Record<string, never> {
-  if (!isContainer()) return {};
-  // `process.getuid` is undefined on Windows; on POSIX it always exists.
+function repairProfileOwnership(profile: string): void {
+  if (!isContainer()) return;
   const { getuid } = process as { getuid?: () => number };
-  if (typeof getuid !== 'function' || getuid() !== 0) return {};
-  return getHermesUserIds() ?? {};
+  if (typeof getuid !== 'function' || getuid() !== 0) return;
+  const ids = getHermesUserIds();
+  if (!ids) return;
+  const dir = profileHome(profile);
+  if (!existsSync(dir)) return;
+  try {
+    execFileSync('chown', ['-R', `${ids.uid}:${ids.gid}`, dir], { stdio: 'ignore' });
+  } catch {
+    // Best-effort; if chown fails the gateway start will surface a clear
+    // 'Permission denied' below.
+  }
 }
 
 /** Single-profile status check (uncached). */
@@ -254,6 +241,10 @@ async function startProfileGatewayInContainer(profile: string): Promise<ProfileG
   if (existing) clearTrackedPid(profile);
 
   ensureContainerDirs();
+  // Repair root-owned legacy files under HERMES_HOME so the hermes-user
+  // gateway can read them (upgrade path; no-op for fresh installs).
+  repairProfileOwnership(profile);
+
   const fd = openSync(logFilePath(profile), 'a');
   // In the official hermes-agent image the binary refuses root, so we
   // drop privileges to the 'hermes' user. Outside that image (or as a
@@ -264,7 +255,7 @@ async function startProfileGatewayInContainer(profile: string): Promise<ProfileG
     detached: true,
     stdio: ['ignore', fd, fd],
     env: { ...process.env, HERMES_NO_COLOR: '1', NO_COLOR: '1', TERM: 'dumb' },
-    ...gatewaySpawnIds(),
+    ...hermesSpawnIds(),
   });
   child.unref();
   closeSync(fd);
