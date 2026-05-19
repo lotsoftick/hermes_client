@@ -1,5 +1,13 @@
 import { spawn } from 'child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import os from 'os';
 import path from 'path';
 import { hermesExec, stripAnsi, withProfile } from './cli';
@@ -140,15 +148,42 @@ function readLogTail(profile: string, lines: number): string {
 }
 
 /**
- * In container mode, the most reliable "is this profile's gateway running"
- * signal is "is the PID we spawned still alive". `hermes gateway status`
- * is best-effort here — it sometimes spots our spawned process via /proc
- * scan, sometimes doesn't. We OR the two so a healthy daemon never shows
- * red because the CLI didn't notice it.
+ * Look up the `hermes` user in `/etc/passwd`. The official hermes-agent
+ * Docker image creates this user and runs the entrypoint as them; the
+ * hermes binary itself refuses to run as root inside that image. When we
+ * spawn the gateway from the API (which runs as root), we need to drop
+ * privileges to this user so hermes will actually start.
+ *
+ * Returns `null` outside the Docker image (no hermes user → no drop).
  */
-function trackedPidIsRunning(profile: string): boolean {
-  const pid = readTrackedPid(profile);
-  return pid != null && pidAlive(pid);
+function getHermesUserIds(): { uid: number; gid: number } | null {
+  let passwd: string;
+  try {
+    passwd = readFileSync('/etc/passwd', 'utf-8');
+  } catch {
+    return null;
+  }
+  const line = passwd.split('\n').find((l) => l.startsWith('hermes:'));
+  if (!line) return null;
+  const parts = line.split(':');
+  if (parts.length < 4) return null;
+  const uid = Number.parseInt(parts[2], 10);
+  const gid = Number.parseInt(parts[3], 10);
+  if (!Number.isFinite(uid) || !Number.isFinite(gid)) return null;
+  return { uid, gid };
+}
+
+/**
+ * Build the privilege-drop options for `spawn`. Returns an empty object
+ * unless we're root inside a container with a `hermes` user — in every
+ * other environment the spawn runs as the current user.
+ */
+function gatewaySpawnIds(): { uid: number; gid: number } | Record<string, never> {
+  if (!isContainer()) return {};
+  // `process.getuid` is undefined on Windows; on POSIX it always exists.
+  const { getuid } = process as { getuid?: () => number };
+  if (typeof getuid !== 'function' || getuid() !== 0) return {};
+  return getHermesUserIds() ?? {};
 }
 
 /** Single-profile status check (uncached). */
@@ -159,13 +194,7 @@ export function readGatewayStatusFor(profile: string): ProfileGatewayStatus {
   });
   const raw = stripAnsi(`${result.stdout}\n${result.stderr}`).trim();
   if (!result.ok) return { profile, running: false, raw, error: result.error };
-  let running = parseGatewayRunning(raw);
-  // In containers, OR in our own PID tracking so a healthy child we spawned
-  // is reported as running even when hermes status doesn't notice it.
-  if (!running && isContainer() && profile !== 'default' && trackedPidIsRunning(profile)) {
-    running = true;
-  }
-  return { profile, running, raw };
+  return { profile, running: parseGatewayRunning(raw), raw };
 }
 
 /**
@@ -201,9 +230,7 @@ function sleep(ms: number): Promise<void> {
  * process is alive past the warm-up window. The default profile is left
  * alone — it's the container's PID 1 already.
  */
-async function startProfileGatewayInContainer(
-  profile: string
-): Promise<ProfileGatewayOpResult> {
+async function startProfileGatewayInContainer(profile: string): Promise<ProfileGatewayOpResult> {
   if (profile === 'default') {
     const status = readGatewayStatusFor('default');
     if (status.running) return { ok: true, raw: status.raw };
@@ -228,10 +255,16 @@ async function startProfileGatewayInContainer(
 
   ensureContainerDirs();
   const fd = openSync(logFilePath(profile), 'a');
+  // In the official hermes-agent image the binary refuses root, so we
+  // drop privileges to the 'hermes' user. Outside that image (or as a
+  // non-root API), this is a no-op. The fd is opened by us before the
+  // privilege drop, so the child writes through our fd regardless of
+  // its UID's permissions on the log file.
   const child = spawn(HERMES_BIN, withProfile(profile, ['gateway', 'run']), {
     detached: true,
     stdio: ['ignore', fd, fd],
     env: { ...process.env, HERMES_NO_COLOR: '1', NO_COLOR: '1', TERM: 'dumb' },
+    ...gatewaySpawnIds(),
   });
   child.unref();
   closeSync(fd);
@@ -241,10 +274,13 @@ async function startProfileGatewayInContainer(
   }
   writeTrackedPid(profile, child.pid);
 
-  // Poll: fail fast if the child dies, success as soon as hermes status
-  // reports running. If hermes status never notices (it sometimes doesn't
-  // for ad-hoc spawned children), trust the live PID after the window.
-  for (let i = 0; i < 12; i += 1) {
+  // Poll: fail fast if the child dies, success only when 'hermes gateway
+  // status' confirms a running gateway. We deliberately do NOT trust
+  // "process is alive" alone — `hermes gateway run` can stay alive while
+  // failing to register as a gateway (e.g. port conflict with PID 1, no
+  // channels configured, profile config invalid), and reporting that as
+  // success would put a green dot on a non-functional gateway.
+  for (let i = 0; i < 15; i += 1) {
     // eslint-disable-next-line no-await-in-loop -- sequential poll-and-check is the whole point
     await sleep(1000);
     if (!pidAlive(child.pid)) {
@@ -261,19 +297,31 @@ async function startProfileGatewayInContainer(
       return { ok: true, raw: `Spawned gateway (pid ${child.pid})\n---\n${status.raw}` };
     }
   }
+
+  // Timed out — alive but unrecognised. Reap and surface the log so the
+  // operator can see why hermes refused to acknowledge the daemon.
+  const tail = readLogTail(profile, 120);
+  try {
+    process.kill(child.pid, 'SIGTERM');
+  } catch {
+    /* already gone */
+  }
+  clearTrackedPid(profile);
+  const finalStatus = readGatewayStatusFor(profile);
   return {
-    ok: true,
-    raw:
-      `Spawned gateway (pid ${child.pid}). Process is alive but ` +
-      `'hermes gateway status' did not confirm within the warm-up window — ` +
-      'check ~/.hermes_client/gateway-logs/' +
-      `${profile}.log if the daemon misbehaves.`,
+    ok: false,
+    error:
+      `'hermes -p ${profile} gateway run' stayed alive for 15 s but ` +
+      "'hermes gateway status' never reported it as running. The process " +
+      'has been terminated. Common causes: (a) the container already has ' +
+      'a gateway as PID 1 and a second binder fails; (b) the profile has ' +
+      'no channels configured yet — set one up first; (c) the profile ' +
+      `config is invalid. Log tail follows.`,
+    raw: `${tail || '(no output captured)'}\n---\n${finalStatus.raw}`,
   };
 }
 
-async function stopProfileGatewayInContainer(
-  profile: string
-): Promise<ProfileGatewayOpResult> {
+async function stopProfileGatewayInContainer(profile: string): Promise<ProfileGatewayOpResult> {
   if (profile === 'default') {
     return {
       ok: false,
