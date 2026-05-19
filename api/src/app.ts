@@ -1,6 +1,11 @@
 /* eslint-disable no-console */
+// MUST be first: populates process.env from .env before any other module
+// is evaluated. Several modules below (services/hermes/paths.ts,
+// data-source.ts, etc.) read process.env at module-load time, so loading
+// dotenv later — even via `dotenv.config()` higher in this file — is too
+// late: the imports above it are already evaluated.
+import 'dotenv/config';
 import 'reflect-metadata';
-import * as dotenv from 'dotenv';
 import http from 'http';
 import express, { Application, Request, Response } from 'express';
 import morgan from 'morgan';
@@ -17,8 +22,6 @@ import AppDataSource from './data-source';
 import { isHermesAvailable, HERMES_BIN } from './services/hermes';
 import { startUpdateChecker } from './services/updateService';
 import { attachPtyWebSocket } from './services/pty';
-
-dotenv.config();
 
 const app: Application = express();
 app.use('/api/public', express.static(`${__dirname}/public`));

@@ -188,10 +188,19 @@ paths:
       operationId: startAgentGateway
       summary: Install and start the Hermes gateway for this agent's profile
       description: |
-        Idempotently installs the per-profile launchd plist (no-op if
-        already installed) and starts the gateway daemon. Polls the
+        Idempotently installs the per-profile launchd / systemd unit (no-op
+        if already installed) and starts the gateway daemon. Polls the
         daemon up to ~6 seconds for it to report loaded; returns success
         only after the daemon is confirmed running.
+
+        **Inside a Docker container** (`/.dockerenv` present), service
+        installation is unavailable, so the API instead spawns
+        `hermes -p <profile> gateway run` as a detached, PID-tracked child
+        (state lives in `~/.hermes_client/gateway-pids/<profile>.pid` and
+        stdout/stderr go to `~/.hermes_client/gateway-logs/<profile>.log`).
+        The `default` profile is treated as already-running (it is the
+        container's PID 1); a start on `default` is reported as success
+        when PID 1 is healthy and as an error otherwise.
 
         Invalidates the cached gateway-status entry on entry, so the
         very next agent list/get response reflects the new state.
@@ -222,6 +231,14 @@ paths:
         - bearerAuth: []
       operationId: stopAgentGateway
       summary: Stop the Hermes gateway for this agent's profile
+      description: |
+        Outside a container, runs `hermes -p <profile> gateway stop`
+        against launchd / systemd. Inside a container, sends SIGTERM
+        (then SIGKILL after a 5 s grace period) to the PID tracked in
+        `~/.hermes_client/gateway-pids/<profile>.pid` and clears the
+        pidfile. Stopping the `default` profile in a container is
+        rejected (500) because it is the container's PID 1 — use
+        `docker stop <container>` instead.
       parameters:
         - $ref: '#/components/parameters/id'
       responses:

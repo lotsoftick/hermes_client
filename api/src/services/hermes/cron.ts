@@ -428,15 +428,17 @@ export async function startGateway(profile?: string | null): Promise<GatewayOpRe
  * Stop gateway(s). When `profile` is provided we stop only that profile;
  * otherwise we stop every profile that currently has a running gateway.
  */
-export function stopGateway(profile?: string | null): GatewayOpResult {
+export async function stopGateway(profile?: string | null): Promise<GatewayOpResult> {
   if (profile) {
-    const result = stopProfileGateway(profile);
+    const result = await stopProfileGateway(profile);
     return { ...result, profiles: [{ profile, ...result }] };
   }
   const status = getGatewayStatus();
   const targets = status.profilesWithGateway;
   if (!targets.length) return { ok: true, raw: 'No running gateways to stop.' };
-  const results = targets.map((p) => ({ profile: p, ...stopProfileGateway(p) }));
+  const results = await Promise.all(
+    targets.map(async (p) => ({ profile: p, ...(await stopProfileGateway(p)) }))
+  );
   const ok = results.every((r) => r.ok);
   const raw = results.map((r) => `# ${r.profile}\n${r.raw}`).join('\n\n---\n\n');
   const error = ok

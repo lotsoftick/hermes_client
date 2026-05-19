@@ -87,7 +87,7 @@ export const startGateway: StartGateway = async (req, res, next) => {
 
 export const stopGateway: StopGateway = async (req, res, next) => {
   try {
-    const result = hermes.stopGateway(req.body?.profile);
+    const result = await hermes.stopGateway(req.body?.profile);
     if (!result.ok) return res.status(500).json(result);
     return res.json(result);
   } catch (error) {
