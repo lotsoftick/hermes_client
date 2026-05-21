@@ -25,30 +25,41 @@ export interface ProfileGatewayOpResult {
 
 /**
  * Detect whether the gateway is alive from `hermes gateway status` output.
- * Hermes uses three different output shapes depending on install state:
+ * Hermes uses several different output shapes depending on platform and
+ * install state — we want any of them to map to a clean yes/no:
  *
- *   1. Not installed
- *      `✗ Gateway is not running\nTo start: hermes gateway run …`
- *   2. Installed but not loaded
- *      `Launchd plist: …`
- *      `✓ Service definition matches the current Hermes install`
- *      `✗ Gateway service is not loaded`
- *   3. Installed and loaded — the running state
- *      `Launchd plist: …`
- *      `✓ Service definition matches the current Hermes install`
- *      `✓ Gateway service is loaded`
- *      `{ … "PID" = 12345 … }`
+ *   macOS / launchd (running):
+ *     `Launchd plist: …`
+ *     `✓ Gateway service is loaded`
+ *     `{ … "PID" = 12345 … }`
  *
- * We treat the daemon as running when any positive marker is present and
- * no negative qualifier appears. The PID dump is a belt-and-braces
- * fallback for future format tweaks.
+ *   Linux / systemd (running, the format on a host install):
+ *     `● hermes-gateway-<profile>.service — Hermes Agent Gateway …`
+ *     `   Loaded: loaded (…)`
+ *     `   Active: active (running) since …; PID …`
+ *     `✓ User gateway service is running`
+ *
+ *   Not installed / not loaded (any platform):
+ *     `✗ Gateway is not running`
+ *     `✗ Gateway service is not loaded`
+ *     `Active: inactive (dead)` / `Active: failed (...)`
  */
 export function parseGatewayRunning(raw: string): boolean {
-  const negative = /(not running|not loaded|not installed|not active)/i.test(raw);
-  if (negative) return false;
+  // systemd's canonical signal — most reliable when present, so check it
+  // first and short-circuit either way.
+  if (/Active:\s*active\s*\(running\)/i.test(raw)) return true;
+  if (/Active:\s*(inactive|failed|dead|deactivating)/i.test(raw)) return false;
+
+  if (/(not running|not loaded|not installed|not active)/i.test(raw)) return false;
+
   return (
     /Gateway is running/i.test(raw) ||
     /Gateway service is loaded/i.test(raw) ||
+    // hermes prints this confirmation line after a successful
+    // `gateway start` on Linux — matches whether or not the systemctl
+    // status block is present in the same output.
+    /User gateway service is running/i.test(raw) ||
+    // launchd PID dump on macOS.
     /"PID"\s*=\s*\d+/.test(raw)
   );
 }
