@@ -16,6 +16,15 @@ import { fileURLToPath } from 'node:url';
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist');
 const PORT = Number(process.env.CLIENT_PORT) || Number(process.env.PORT) || 18888;
 const API_PORT = Number(process.env.API_PORT) || 18889;
+// When the install sits behind a reverse proxy on a single domain
+// (https://hermes.example.com) and the operator routes /api/* to the
+// API, this flag tells the browser to use \`/api\` instead of a
+// host:port URL. We resolve it once at startup — flipping the value
+// requires a restart, which is consistent with how API_PORT / CLIENT_PORT
+// work.
+const USE_RELATIVE_API_URL = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.USE_RELATIVE_API_URL || '').toLowerCase()
+);
 
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript', '.mjs': 'application/javascript',
@@ -53,17 +62,26 @@ function hostToHostname(host) {
 }
 
 function injectRuntimeConfig(html, headers) {
-  const forwardedProto = TRUST_PROXY
-    ? firstHeader(headers['x-forwarded-proto']).split(',')[0].trim()
-    : '';
-  const protocol = forwardedProto || 'http';
-  const forwardedHost = TRUST_PROXY
-    ? firstHeader(headers['x-forwarded-host']).split(',')[0].trim()
-    : '';
-  const host = forwardedHost || firstHeader(headers.host).trim() || 'localhost';
-  const hostname = hostToHostname(host);
-  const apiBaseUrl = protocol + '://' + hostname + ':' + API_PORT + '/api';
-  const cfg = JSON.stringify({ apiBaseUrl, apiPort: API_PORT });
+  let cfg;
+  if (USE_RELATIVE_API_URL) {
+    // Same-origin path. The reverse proxy (nginx, Caddy, …) routes
+    // /api/* to the API and /ws/* to the API's websocket endpoints.
+    // No host or port leaks into the bundle, so the same build works
+    // for every domain that fronts it.
+    cfg = JSON.stringify({ apiBaseUrl: '/api' });
+  } else {
+    const forwardedProto = TRUST_PROXY
+      ? firstHeader(headers['x-forwarded-proto']).split(',')[0].trim()
+      : '';
+    const protocol = forwardedProto || 'http';
+    const forwardedHost = TRUST_PROXY
+      ? firstHeader(headers['x-forwarded-host']).split(',')[0].trim()
+      : '';
+    const host = forwardedHost || firstHeader(headers.host).trim() || 'localhost';
+    const hostname = hostToHostname(host);
+    const apiBaseUrl = protocol + '://' + hostname + ':' + API_PORT + '/api';
+    cfg = JSON.stringify({ apiBaseUrl, apiPort: API_PORT });
+  }
   const tag = '<script>window.__HERMES_CONFIG__=' + cfg + ';</script>';
   if (html.includes('</head>')) return html.replace('</head>', '  ' + tag + '\\n  </head>');
   return tag + html;

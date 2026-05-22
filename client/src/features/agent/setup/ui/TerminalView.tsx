@@ -69,6 +69,26 @@ function isLightColor(hex: string): boolean {
   return 0.299 * r + 0.587 * g + 0.114 * b > 160;
 }
 
+/**
+ * Resolve the websocket origin (`wss://host[:port]`) for /ws/pty.
+ *
+ * `API_BASE_URL` is either:
+ *   - an absolute URL ("http://1.2.3.4:18889/api") — use its scheme + host
+ *   - a relative path ("/api") — `new URL(...)` would throw, so we fall
+ *     back to `window.location` (the page origin), which is what nginx
+ *     is fronting in the `USE_RELATIVE_API_URL=1` deployment.
+ */
+function wsOrigin(): string {
+  try {
+    const u = new URL(API_BASE_URL);
+    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${u.host}`;
+  } catch {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}`;
+  }
+}
+
 async function buildWsUrl(
   profile: string,
   cmd: string,
@@ -84,9 +104,7 @@ async function buildWsUrl(
   if (!ticketRes.ok) return null;
   const body = (await ticketRes.json()) as { ticket?: string };
   if (!body.ticket) return null;
-  const apiUrl = new URL(API_BASE_URL);
-  const proto = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-  const u = new URL(`${proto}//${apiUrl.host}/ws/pty`);
+  const u = new URL(`${wsOrigin()}/ws/pty`);
   u.searchParams.set('ticket', body.ticket);
   u.searchParams.set('profile', profile);
   u.searchParams.set('cmd', cmd);

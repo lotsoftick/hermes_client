@@ -98,10 +98,11 @@ To rebuild after code changes, run **`npm start`** from the repo again.
 
 Port configuration lives in a single user-level file at **`~/.hermes_client/.env`**. It is created automatically on first run with sensible defaults.
 
-| Variable      | Default | Description             |
-| ------------- | ------- | ----------------------- |
-| `API_PORT`    | `18889` | Port the API listens on |
-| `CLIENT_PORT` | `18888` | Port the web UI uses    |
+| Variable               | Default | Description                                                                                          |
+| ---------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `API_PORT`             | `18889` | Port the API listens on                                                                              |
+| `CLIENT_PORT`          | `18888` | Port the web UI uses                                                                                 |
+| `USE_RELATIVE_API_URL` | `0`     | When `1`, the browser issues same-origin requests to `/api` and `/ws` instead of `http://host:18889` |
 
 After changing a value, apply it with:
 
