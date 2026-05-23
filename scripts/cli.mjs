@@ -45,6 +45,86 @@ function killPorts() {
   for (const port of all) killPort(port);
 }
 
+const SYSTEMD_SYSTEM_UNIT = '/etc/systemd/system/hermes_client.service';
+const SYSTEMD_USER_UNIT = path.join(
+  os.homedir(),
+  '.config',
+  'systemd',
+  'user',
+  'hermes_client.service'
+);
+
+/**
+ * Drive the OS process supervisor (LaunchAgent on macOS, systemd on Linux).
+ * Returns:
+ *   'ok'           — supervisor accepted the action
+ *   'failed'       — supervisor exists but the action errored; caller must NOT
+ *                    fall back to detach, or we double-bind the ports
+ *   'unsupervised' — no supervisor installed; caller can use the legacy detach
+ *                    path safely
+ */
+function supervisorAction(action) {
+  if (IS_DARWIN) {
+    if (!existsSync(getPlistPath())) return 'unsupervised';
+    try {
+      if (action === 'stop') {
+        bootoutLaunchAgent();
+      } else if (action === 'start') {
+        bootstrapLaunchAgent();
+      } else {
+        /* restart */
+        if (launchAgentIsLoaded()) kickstartLaunchAgent();
+        else bootstrapLaunchAgent();
+      }
+      return 'ok';
+    } catch {
+      return 'failed';
+    }
+  }
+
+  if (process.platform === 'linux') {
+    /* Prefer system unit (the host install script path) over the per-user
+     * unit, since the system unit is what the install script writes.
+     * Either is sufficient to claim "supervised". */
+    let prefix = null;
+    if (existsSync(SYSTEMD_SYSTEM_UNIT)) prefix = [];
+    else if (existsSync(SYSTEMD_USER_UNIT)) prefix = ['--user'];
+    if (prefix === null) return 'unsupervised';
+    try {
+      execFileSync('systemctl', [...prefix, action, 'hermes_client.service'], {
+        stdio: 'inherit',
+      });
+      return 'ok';
+    } catch {
+      return 'failed';
+    }
+  }
+
+  /* Windows installs go through the Startup folder — that's a one-shot
+   * launcher, not a process supervisor, so we don't try to drive it.
+   * Fall through to detach, which is what was happening before. */
+  return 'unsupervised';
+}
+
+/** Back-compat wrapper for any external caller still using the old name. */
+export function restartViaSupervisor() {
+  const r = supervisorAction('restart');
+  return r === 'ok' ? 'restarted' : r;
+}
+
+function reportSupervisorFailure(action) {
+  console.error(
+    `\n❌ A process supervisor (systemd unit / LaunchAgent) is installed but\n` +
+      `   '${action}' failed. NOT falling back to direct port management — that\n` +
+      `   would race the supervisor and produce an EADDRINUSE crash loop.\n\n` +
+      `   Inspect:\n` +
+      `     systemctl status hermes_client    # Linux\n` +
+      `     launchctl print gui/$UID/${LAUNCH_AGENT_LABEL}    # macOS\n` +
+      `     journalctl -u hermes_client -n 50    # Linux\n`
+  );
+  process.exit(1);
+}
+
 function linkGlobal() {
   execFileSync(NPM_BIN, ['link'], { cwd: ROOT, stdio: 'pipe' });
 }
@@ -120,8 +200,24 @@ function confirm(question) {
 /** npm start only — full build + deploy + autostart (os-specific) + global link */
 export function fullStart() {
   deploy();
-  killPorts();
 
+  const supervised = supervisorAction('restart');
+  if (supervised === 'ok') {
+    linkGlobal();
+    const { clientPort } = currentPorts();
+    console.log('');
+    console.log('  🚀 Hermes Client is running (restarted via supervisor)');
+    console.log(`  🌐 http://localhost:${clientPort}`);
+    console.log('  📁 ~/.hermes_client');
+    console.log('  ⚙️  Ports: ~/.hermes_client/.env');
+    console.log('  🛠️  hermes_client status | stop | restart | uninstall');
+    console.log('');
+    return;
+  }
+  if (supervised === 'failed') reportSupervisorFailure('restart');
+
+  /* Unsupervised install — legacy detach path. */
+  killPorts();
   if (IS_DARWIN) {
     installLaunchd();
   } else if (IS_WINDOWS) {
@@ -148,8 +244,23 @@ export function fullStart() {
 /** hermes_client start — run from existing build only */
 function cmdStart() {
   assertBuilt();
-  killPorts();
 
+  /* If supervised, asking the supervisor to start is the only safe move:
+   * `killPorts()` + `detachStart()` would create a second pair of api/client
+   * children racing systemd's `Restart=on-failure` respawn. */
+  const sup = supervisorAction('start');
+  if (sup === 'ok') {
+    const { clientPort } = currentPorts();
+    console.log('');
+    console.log('  🚀 Hermes Client started (via supervisor)');
+    console.log(`  🌐 http://localhost:${clientPort}`);
+    console.log('');
+    return;
+  }
+  if (sup === 'failed') reportSupervisorFailure('start');
+
+  /* Unsupervised — legacy path. */
+  killPorts();
   if (IS_DARWIN) {
     installLaunchd();
   } else if (IS_WINDOWS) {
@@ -167,27 +278,35 @@ function cmdStart() {
 }
 
 function cmdStop() {
+  /* Same reasoning as `cmdStart`: a bare `killPorts()` against systemd's
+   * supervised children only triggers `Restart=on-failure`, leaving the
+   * service flapping. Tell the supervisor to stop. */
+  const sup = supervisorAction('stop');
+  if (sup === 'ok') {
+    console.log('  🛑 Hermes Client stopped (via supervisor)');
+    return;
+  }
+  if (sup === 'failed') reportSupervisorFailure('stop');
+
+  /* Unsupervised — legacy path. The macOS branch here is dead code on
+   * supervised installs (the plist exists → supervisorAction returns 'ok'),
+   * but kept as a defensive cleanup if someone removed the plist by hand. */
   if (IS_DARWIN) bootoutLaunchAgent();
   killPorts();
   console.log('  🛑 Hermes Client stopped');
 }
 
 function cmdRestart() {
-  if (IS_DARWIN) {
-    if (!existsSync(getPlistPath())) {
-      console.log('❌ No LaunchAgent installed. Run `npm start` first.');
-      return;
-    }
-    if (launchAgentIsLoaded()) {
-      kickstartLaunchAgent();
-    } else {
-      bootstrapLaunchAgent();
-    }
+  const sup = supervisorAction('restart');
+  if (sup === 'ok') {
     const { clientPort } = currentPorts();
-    console.log('  🔄 Hermes Client restarted');
+    console.log('  🔄 Hermes Client restarted (via supervisor)');
     console.log(`  🌐 http://localhost:${clientPort}`);
     return;
   }
+  if (sup === 'failed') reportSupervisorFailure('restart');
+
+  /* Unsupervised — sequence stop+start so the legacy detach path runs. */
   cmdStop();
   cmdStart();
 }
