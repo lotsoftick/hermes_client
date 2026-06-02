@@ -1,3 +1,4 @@
+import os from 'os';
 import { hermesExec, stripAnsi } from './cli';
 
 /**
@@ -100,6 +101,35 @@ function gatewayArgs(sub: string[]): string[] {
   return useSystemGateway() ? [...sub, '--system'] : sub;
 }
 
+/**
+ * Which OS user the `--system` gateway service should run as.
+ *
+ * Hermes refuses to install a system service as root unless told which
+ * account to run it under (`Refusing to install the gateway system
+ * service as root; pass --run-as-user root …`). Our install runs the
+ * whole stack as root, so we default to the API's own user. Override with
+ * `HERMES_GATEWAY_RUN_AS_USER` to run the daemon under a less-privileged
+ * account.
+ */
+function systemRunAsUser(): string {
+  const override = process.env.HERMES_GATEWAY_RUN_AS_USER;
+  if (override && override.trim()) return override.trim();
+  try {
+    return os.userInfo().username || 'root';
+  } catch {
+    return 'root';
+  }
+}
+
+/**
+ * Args for `gateway install`. On the system path we must pass
+ * `--run-as-user <user>` or Hermes aborts when invoked as root.
+ */
+function gatewayInstallArgs(): string[] {
+  if (!useSystemGateway()) return ['gateway', 'install'];
+  return ['gateway', 'install', '--system', '--run-as-user', systemRunAsUser()];
+}
+
 /** Single-profile status check (uncached). */
 export function readGatewayStatusFor(profile: string): ProfileGatewayStatus {
   const result = hermesExec(gatewayArgs(['gateway', 'status']), {
@@ -156,7 +186,7 @@ export async function startProfileGateway(profile: string): Promise<ProfileGatew
   // Extra lines past the last prompt are harmlessly ignored. (On the
   // `--system` path most of these prompts are skipped, but feeding stdin
   // is still harmless.)
-  const installed = hermesExec(gatewayArgs(['gateway', 'install']), {
+  const installed = hermesExec(gatewayInstallArgs(), {
     profile: flag,
     timeoutMs: 60000,
     input: 'y\ny\ny\ny\n',
