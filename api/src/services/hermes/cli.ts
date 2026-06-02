@@ -19,7 +19,19 @@ export interface HermesExecResult {
 /** Run hermes synchronously, capturing stdout/stderr. Never throws. */
 export function hermesExec(
   args: string[],
-  opts: { profile?: string | null; timeoutMs?: number; env?: Record<string, string> } = {}
+  opts: {
+    profile?: string | null;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+    /**
+     * Data piped to the child's stdin. Some hermes subcommands (e.g.
+     * `gateway install`) prompt interactively — "Start the gateway now
+     * after installing the service? [Y/n]:" — and would otherwise hang
+     * forever because we run them with no controlling terminal. Pass
+     * `input: 'y\n'` to answer such prompts non-interactively.
+     */
+    input?: string;
+  } = {}
 ): HermesExecResult {
   const argv = withProfile(opts.profile, args);
   try {
@@ -27,7 +39,12 @@ export function hermesExec(
       encoding: 'utf-8',
       timeout: opts.timeoutMs ?? 30000,
       env: { ...process.env, ...opts.env, HERMES_NO_COLOR: '1', NO_COLOR: '1', TERM: 'dumb' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // When `input` is supplied, execFileSync wires up a stdin pipe and
+      // feeds it; otherwise stdin stays closed so non-prompting commands
+      // can't block on a missing TTY.
+      ...(opts.input !== undefined
+        ? { input: opts.input }
+        : { stdio: ['ignore', 'pipe', 'pipe'] as const }),
     });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {

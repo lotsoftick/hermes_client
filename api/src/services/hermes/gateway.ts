@@ -116,7 +116,14 @@ function sleep(ms: number): Promise<void> {
 export async function startProfileGateway(profile: string): Promise<ProfileGatewayOpResult> {
   invalidateStatusCache(profile);
   const flag = profileFlag(profile);
-  const installed = hermesExec(['gateway', 'install'], { profile: flag, timeoutMs: 60000 });
+  // `gateway install` prompts "Start the gateway now after installing the
+  // service? [Y/n]:" and blocks on stdin. We have no TTY, so feed "y" to
+  // both accept the install and have it start the daemon in one shot.
+  const installed = hermesExec(['gateway', 'install'], {
+    profile: flag,
+    timeoutMs: 60000,
+    input: 'y\n',
+  });
   if (!installed.ok) {
     return {
       ok: false,
