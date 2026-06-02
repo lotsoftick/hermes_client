@@ -69,9 +69,40 @@ function profileFlag(profile: string): string | null {
   return profile === 'default' ? null : profile;
 }
 
+/**
+ * Whether to drive the Linux **system-level** gateway service (`--system`)
+ * instead of the default per-user systemd unit.
+ *
+ * On a headless root install there's no login session — no
+ * `XDG_RUNTIME_DIR`, no user dbus, no lingering — so a *user* gateway unit
+ * can't reliably start or survive reboots. When we're root on Linux we
+ * therefore target the system service, which registers
+ * `/etc/systemd/system/hermes-gateway-<profile>.service` and runs under
+ * PID 1 alongside the API, exactly how `hermes_client.service` itself runs.
+ *
+ * Set `HERMES_GATEWAY_SYSTEM=1` / `0` to override the autodetection for a
+ * host where it guesses wrong.
+ */
+function useSystemGateway(): boolean {
+  const override = process.env.HERMES_GATEWAY_SYSTEM;
+  if (override !== undefined) {
+    return ['1', 'true', 'yes', 'on'].includes(override.toLowerCase());
+  }
+  return (
+    process.platform === 'linux' &&
+    typeof process.getuid === 'function' &&
+    process.getuid() === 0
+  );
+}
+
+/** Append `--system` to a gateway subcommand when we manage the system unit. */
+function gatewayArgs(sub: string[]): string[] {
+  return useSystemGateway() ? [...sub, '--system'] : sub;
+}
+
 /** Single-profile status check (uncached). */
 export function readGatewayStatusFor(profile: string): ProfileGatewayStatus {
-  const result = hermesExec(['gateway', 'status'], {
+  const result = hermesExec(gatewayArgs(['gateway', 'status']), {
     profile: profileFlag(profile),
     timeoutMs: 10000,
   });
@@ -122,8 +153,10 @@ export async function startProfileGateway(profile: string): Promise<ProfileGatew
   //   "Start the gateway automatically on login/boot with systemd? [Y/n]:"
   // We have no TTY, so feed a "y" line per prompt. Answering yes to all is
   // the behaviour we want: install, start now, and persist across reboots.
-  // Extra lines past the last prompt are harmlessly ignored.
-  const installed = hermesExec(['gateway', 'install'], {
+  // Extra lines past the last prompt are harmlessly ignored. (On the
+  // `--system` path most of these prompts are skipped, but feeding stdin
+  // is still harmless.)
+  const installed = hermesExec(gatewayArgs(['gateway', 'install']), {
     profile: flag,
     timeoutMs: 60000,
     input: 'y\ny\ny\ny\n',
@@ -135,7 +168,10 @@ export async function startProfileGateway(profile: string): Promise<ProfileGatew
       raw: stripAnsi(`${installed.stdout}\n${installed.stderr}`).trim(),
     };
   }
-  const started = hermesExec(['gateway', 'start'], { profile: flag, timeoutMs: 30000 });
+  const started = hermesExec(gatewayArgs(['gateway', 'start']), {
+    profile: flag,
+    timeoutMs: 30000,
+  });
   let raw = stripAnsi(
     `${installed.stdout}\n${installed.stderr}\n${started.stdout}\n${started.stderr}`
   ).trim();
@@ -161,7 +197,7 @@ export async function startProfileGateway(profile: string): Promise<ProfileGatew
 
 export function stopProfileGateway(profile: string): ProfileGatewayOpResult {
   invalidateStatusCache(profile);
-  const result = hermesExec(['gateway', 'stop'], {
+  const result = hermesExec(gatewayArgs(['gateway', 'stop']), {
     profile: profileFlag(profile),
     timeoutMs: 30000,
   });
