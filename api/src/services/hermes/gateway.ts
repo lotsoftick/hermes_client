@@ -116,13 +116,17 @@ function sleep(ms: number): Promise<void> {
 export async function startProfileGateway(profile: string): Promise<ProfileGatewayOpResult> {
   invalidateStatusCache(profile);
   const flag = profileFlag(profile);
-  // `gateway install` prompts "Start the gateway now after installing the
-  // service? [Y/n]:" and blocks on stdin. We have no TTY, so feed "y" to
-  // both accept the install and have it start the daemon in one shot.
+  // `gateway install` asks several interactive [Y/n] questions in sequence
+  // and blocks on stdin between each:
+  //   "Start the gateway now after installing the service? [Y/n]:"
+  //   "Start the gateway automatically on login/boot with systemd? [Y/n]:"
+  // We have no TTY, so feed a "y" line per prompt. Answering yes to all is
+  // the behaviour we want: install, start now, and persist across reboots.
+  // Extra lines past the last prompt are harmlessly ignored.
   const installed = hermesExec(['gateway', 'install'], {
     profile: flag,
     timeoutMs: 60000,
-    input: 'y\n',
+    input: 'y\ny\ny\ny\n',
   });
   if (!installed.ok) {
     return {
