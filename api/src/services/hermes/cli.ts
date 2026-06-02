@@ -44,7 +44,7 @@ export function hermesExec(
       // can't block on a missing TTY.
       ...(opts.input !== undefined
         ? { input: opts.input }
-        : { stdio: ['ignore', 'pipe', 'pipe'] as const }),
+        : { stdio: ['ignore', 'pipe', 'pipe'] as ('ignore' | 'pipe')[] }),
     });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {
