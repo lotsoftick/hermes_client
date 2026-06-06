@@ -14,6 +14,7 @@ import {
 } from '../../@types/cron';
 import { profileSessionsDir } from './profiles';
 import { cleanMessageText } from './textCleanup';
+import * as stateDb from './stateDb';
 import {
   readGatewayStatusFor,
   startProfileGateway,
@@ -239,12 +240,58 @@ function parseRunDateMs(dateStr: string, timeStr: string): number {
   return new Date(y, mo, d, h, mi, s).getTime();
 }
 
+/** Parse the `cron_<jobId>_<YYYYMMDD>_<HHMMSS>` run timestamp out of a session id. */
+function ranAtFromCronId(id: string): number {
+  const m = id.match(/_(\d{8})_(\d{6})$/);
+  return m ? parseRunDateMs(m[1], m[2]) : Date.now();
+}
+
+/**
+ * Current Hermes stores cron-run transcripts in the per-profile `state.db`
+ * (`source='cron'`) rather than one JSON file per run. Read them from there,
+ * deriving the same glanceable digest (last assistant turn / error hint).
+ * Returns null when there's no usable DB so the caller can fall back to the
+ * legacy session-file scan.
+ */
+function cronRunsFromStateDb(owner: string, jobId: string, limit: number): CronRun[] | null {
+  const profile = owner === 'default' ? null : owner;
+  const sessions = stateDb.listCronSessions(profile, jobId, limit);
+  if (!sessions) return null;
+  return sessions.map((s) => {
+    const rows = stateDb.listStateMessages(profile, s.id) ?? [];
+    const lastAssistant = [...rows].reverse().find((m) => m.role === 'assistant');
+    const response = cleanMessageText('assistant', (lastAssistant?.content ?? '').trim());
+    let error: string | undefined;
+    if (!response) {
+      const lastNonUser = [...rows].reverse().find((m) => m.role && m.role !== 'user');
+      error = (lastNonUser?.content ?? '').trim() || 'No assistant response recorded for this run.';
+    }
+    const lastSecs = s.endedAt ?? s.startedAt;
+    return {
+      id: s.id,
+      sessionId: s.id,
+      ranAtMs: lastSecs ? Math.round(lastSecs * 1000) : ranAtFromCronId(s.id),
+      response,
+      error,
+      messageCount: rows.length || s.messageCount || 0,
+    };
+  });
+}
+
 export function listCronRuns(
   jobId: string,
   profile?: string | null,
   limit = 25
 ): CronRun[] {
   const owner = findJobProfile(jobId, profile) ?? profile ?? 'default';
+  if (stateDb.hasStateDb(owner === 'default' ? null : owner)) {
+    try {
+      const runs = cronRunsFromStateDb(owner, jobId, limit);
+      if (runs) return runs;
+    } catch {
+      /* fall through to the legacy session-file scan */
+    }
+  }
   const dir = profileSessionsDir(owner === 'default' ? null : owner);
   if (!fs.existsSync(dir)) return [];
 

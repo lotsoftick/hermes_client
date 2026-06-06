@@ -2,6 +2,7 @@ export * from './paths';
 export * from './cli';
 export * from './profiles';
 export * from './textCleanup';
+export * from './stateDb';
 export * from './sessions';
 export * from './images';
 export * from './chat';

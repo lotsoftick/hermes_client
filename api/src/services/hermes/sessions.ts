@@ -4,6 +4,7 @@ import { hermesExec, stripAnsi } from './cli';
 import { profileSessionsDir } from './profiles';
 import { cleanMessageText } from './textCleanup';
 import { collectImageSrcs } from './images';
+import * as stateDb from './stateDb';
 
 export interface HermesSession {
   id: string;
@@ -42,6 +43,15 @@ export function isValidSessionId(id: string): boolean {
 
 export function sessionExists(profile: string | undefined | null, sessionId: string): boolean {
   if (!isValidSessionId(sessionId)) return false;
+  if (stateDb.hasStateDb(profile)) {
+    try {
+      if (stateDb.stateSessionExists(profile, sessionId)) return true;
+      // Not in the DB — still check for a legacy JSON file (covers a session
+      // created by an older Hermes that predates the migration).
+    } catch {
+      /* fall through */
+    }
+  }
   const file = path.join(profileSessionsDir(profile), `session_${sessionId}.json`);
   return fs.existsSync(file);
 }
@@ -115,6 +125,13 @@ export function findLatestClientSession(
   profile: string | undefined | null,
   sinceMs: number
 ): string | null {
+  if (stateDb.hasStateDb(profile)) {
+    try {
+      return stateDb.latestStateSessionSince(profile, sinceMs);
+    } catch {
+      /* fall through to the legacy session-file scan */
+    }
+  }
   const dir = profileSessionsDir(profile);
   if (!fs.existsSync(dir)) return null;
   const candidates = fs
@@ -239,21 +256,33 @@ function parseExitCode(raw: string): number | null {
  * by `(conversationId, externalId)` is idempotent even when Hermes
  * appends new turns to the same file.
  */
-export function getSessionMessages(
-  profile: string | undefined | null,
-  sessionId: string
-): SessionMessage[] {
-  if (!isValidSessionId(sessionId)) return [];
-  const file = path.join(profileSessionsDir(profile), `session_${sessionId}.json`);
-  if (!fs.existsSync(file)) return [];
-  let data: RawSessionFile;
-  try {
-    data = JSON.parse(fs.readFileSync(file, 'utf-8')) as RawSessionFile;
-  } catch {
-    return [];
+function stateRowToRaw(r: stateDb.StateMessageRow): RawSessionRow {
+  let toolCalls: RawToolCall[] | undefined;
+  if (r.tool_calls) {
+    try {
+      const parsed = JSON.parse(r.tool_calls);
+      if (Array.isArray(parsed)) toolCalls = parsed as RawToolCall[];
+    } catch {
+      /* ignore a malformed tool_calls blob rather than dropping the turn */
+    }
   }
-  const rows = data.messages ?? data.events ?? [];
+  return {
+    role: r.role,
+    content: r.content ?? undefined,
+    tool_calls: toolCalls,
+    tool_call_id: r.tool_call_id ?? undefined,
+    name: r.tool_name ?? undefined,
+    reasoning: r.reasoning ?? undefined,
+    reasoning_content: r.reasoning_content ?? undefined,
+    timestamp: r.timestamp ? new Date(r.timestamp * 1000).toISOString() : undefined,
+  };
+}
 
+/**
+ * Fold a sequence of raw session rows (from either storage backend) into the
+ * `SessionMessage`s the rest of the app renders.
+ */
+function buildSessionMessages(sessionId: string, rows: RawSessionRow[]): SessionMessage[] {
   // The agent loop interleaves assistant rows that *call* tools with
   // `role: 'tool'` rows that carry the results, before a final assistant
   // row with the prose answer. We collect tool calls (and the images
@@ -348,6 +377,34 @@ export function getSessionMessages(
   return out;
 }
 
+export function getSessionMessages(
+  profile: string | undefined | null,
+  sessionId: string
+): SessionMessage[] {
+  if (!isValidSessionId(sessionId)) return [];
+  // Current Hermes stores conversations in a per-profile SQLite `state.db`;
+  // older installs still keep one JSON file per session. Prefer the DB and
+  // fall back to JSON on any read error.
+  if (stateDb.hasStateDb(profile)) {
+    try {
+      const rows = stateDb.listStateMessages(profile, sessionId);
+      if (rows) return buildSessionMessages(sessionId, rows.map(stateRowToRaw));
+    } catch {
+      /* fall through to the legacy JSON store */
+    }
+  }
+  const file = path.join(profileSessionsDir(profile), `session_${sessionId}.json`);
+  if (!fs.existsSync(file)) return [];
+  let data: RawSessionFile;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf-8')) as RawSessionFile;
+  } catch {
+    return [];
+  }
+  const rows = data.messages ?? data.events ?? [];
+  return buildSessionMessages(sessionId, rows);
+}
+
 /**
  * List session ids known to a profile by scanning its sessions directory,
  * along with the file mtime so callers can decide whether the file is
@@ -359,6 +416,22 @@ export interface SessionFileEntry {
 }
 
 export function listProfileSessionFiles(profile: string | undefined | null): SessionFileEntry[] {
+  if (stateDb.hasStateDb(profile)) {
+    try {
+      const sessions = stateDb.listStateSessions(profile);
+      if (sessions) {
+        // `listStateSessions` already excludes sub-sessions and archived
+        // ones. We expose `lastActivity` as the mtime so discovery's
+        // recent-activity grace window keeps working.
+        return sessions.map((s) => ({
+          id: s.id,
+          mtimeMs: (s.lastActivity ?? s.endedAt ?? s.startedAt ?? 0) * 1000,
+        }));
+      }
+    } catch {
+      /* fall through to the legacy session-directory scan */
+    }
+  }
   const dir = profileSessionsDir(profile);
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -401,6 +474,30 @@ export function readSessionMeta(
   sessionId: string
 ): SessionMeta | null {
   if (!isValidSessionId(sessionId)) return null;
+  if (stateDb.hasStateDb(profile)) {
+    try {
+      const s = stateDb.getStateSession(profile, sessionId);
+      if (s) {
+        let { title } = s;
+        if (!title) {
+          const firstUser = stateDb.firstUserContent(profile, sessionId);
+          title = firstUser ? firstUser.trim().slice(0, 200) || null : null;
+        }
+        const lastSecs = s.lastActivity ?? s.endedAt;
+        return {
+          id: sessionId,
+          title,
+          startedAt: s.startedAt ? new Date(s.startedAt * 1000) : null,
+          lastUpdatedAt: lastSecs ? new Date(lastSecs * 1000) : null,
+          model: s.model,
+          messageCount: s.messageCount,
+        };
+      }
+      // Session not in the DB — fall through in case a legacy JSON file holds it.
+    } catch {
+      /* fall through to the legacy JSON store */
+    }
+  }
   const file = path.join(profileSessionsDir(profile), `session_${sessionId}.json`);
   if (!fs.existsSync(file)) return null;
   let data: Record<string, unknown>;
