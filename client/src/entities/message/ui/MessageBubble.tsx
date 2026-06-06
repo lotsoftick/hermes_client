@@ -3,14 +3,23 @@ import { Box, Paper, Typography, IconButton, useTheme } from '@mui/material';
 import { DeleteOutline, ContentCopy, Done } from '@mui/icons-material';
 import { DeleteButton, MarkdownContent } from '../../../shared/ui';
 import ThinkingBlock from './ThinkingBlock';
+import ToolStepsBlock from './ToolStepsBlock';
+import InlineImages from './InlineImages';
 import FileAttachments from './FileAttachments';
 import CronMessageBubble from './CronMessageBubble';
 import { parseCronMessage } from '../lib/parseCronMessage';
-import { useDeleteMessageMutation, type Message, type MessageFile } from '../api';
+import { useDeleteMessageMutation, type Message, type MessageFile, type ToolCall } from '../api';
 
 export type MessageLike =
   | Message
-  | { text: string; role: string; thinking?: string | null; files?: MessageFile[] };
+  | {
+      text: string;
+      role: string;
+      thinking?: string | null;
+      files?: MessageFile[];
+      toolCalls?: ToolCall[];
+      images?: string[];
+    };
 
 interface MessageBubbleProps {
   message: MessageLike;
@@ -33,6 +42,8 @@ const MessageBubble = memo(function MessageBubble({
   const isUser = message.role === 'user';
   const thinking = thinkingText || ('thinking' in message ? message.thinking : null);
   const files = ('files' in message ? message.files : undefined) ?? [];
+  const toolCalls = ('toolCalls' in message ? message.toolCalls : undefined) ?? [];
+  const images = ('images' in message ? message.images : undefined) ?? [];
   const parsedCron = isUser && !isStreaming ? parseCronMessage(message.text) : null;
   const displayText = message.text ?? '';
   const hasTextContent = displayText && !displayText.startsWith('[Attached ');
@@ -123,6 +134,8 @@ const MessageBubble = memo(function MessageBubble({
           ) : (
             <MarkdownContent isStreaming={isStreaming}>{displayText}</MarkdownContent>
           ))}
+        {!isUser && images.length > 0 && <InlineImages images={images} />}
+        {!isUser && toolCalls.length > 0 && <ToolStepsBlock calls={toolCalls} />}
         {isStreaming && !hasTextContent && (
           <Box
             component="span"

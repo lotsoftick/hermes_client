@@ -40,6 +40,51 @@ paths:
           $ref: '#/components/responses/401'
         500:
           $ref: '#/components/responses/500'
+  /message/image:
+    get:
+      tags:
+        - message
+      security:
+        - bearerAuth: []
+      operationId: serveImage
+      summary: Serve a local agent-produced image by path
+      description: >
+        Streams an image file referenced in assistant output (e.g. one an
+        agent generated and saved to disk). The `path` is re-validated
+        against a fixed allowlist of roots (the Hermes home, the client
+        uploads dir, the system temp dir, `/tmp`, and the API working
+        directory) and must resolve via `realpath` to an existing image
+        file, so `../` traversal, symlink escapes, and non-image files are
+        rejected. This is the endpoint the `images` field of a message
+        points at for non-URL sources.
+      parameters:
+        - in: query
+          name: path
+          required: true
+          description: Absolute (or `~/`-prefixed) path to the image file.
+          schema:
+            type: string
+      responses:
+        200:
+          description: The raw image bytes (Content-Type inferred from extension)
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        404:
+          description: Image not found, not an image, or outside the allowed roots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        401:
+          $ref: '#/components/responses/401'
+        500:
+          $ref: '#/components/responses/500'
   /message:
     post:
       tags:
@@ -210,6 +255,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/messageFile'
+        toolCalls:
+          type: array
+          description: Tool invocations that led up to this assistant turn (empty for user turns).
+          items:
+            $ref: '#/components/schemas/messageToolCall'
+        images:
+          type: array
+          description: >
+            Renderable image srcs discovered in this turn — either `http(s)`
+            URLs or `/message/image?path=…` links to the serve endpoint.
+          items:
+            type: string
         role:
           type: string
           enum: [user, assistant]
@@ -218,6 +275,34 @@ components:
         createdAt:
           type: string
           format: date-time
+    #
+    messageToolCall:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Provider-assigned tool call id.
+        name:
+          type: string
+          description: Tool/function name, e.g. terminal, browser_navigate, read_file.
+        args:
+          type: string
+          description: Raw JSON arguments string (truncated for storage).
+        result:
+          type: string
+          nullable: true
+          description: Tool result text (truncated); null until the result is seen.
+        ok:
+          type: boolean
+          nullable: true
+          description: Best-effort success flag parsed from the result.
+        exitCode:
+          type: integer
+          nullable: true
+          description: Process exit code when the tool reported one.
+        truncated:
+          type: boolean
+          description: Whether the stored result was clipped to fit the storage cap.
     #
     messageListResponse:
       type: object

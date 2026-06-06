@@ -8,12 +8,24 @@ export interface MessageFile {
   url: string;
 }
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: string;
+  result: string | null;
+  ok: boolean | null;
+  exitCode: number | null;
+  truncated: boolean;
+}
+
 export interface Message {
   _id: string;
   conversationId: string;
   text: string;
   thinking: string | null;
   files: MessageFile[];
+  toolCalls: ToolCall[];
+  images: string[];
   role: 'user' | 'assistant';
   createdAt: string;
 }

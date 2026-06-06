@@ -21,6 +21,20 @@ export default class Message {
   @Column({ type: 'simple-json', default: '[]' })
   files: { filename: string; originalName: string; mimetype: string; size: number; url: string }[];
 
+  @Column({ type: 'simple-json', default: '[]' })
+  toolCalls: {
+    id: string;
+    name: string;
+    args: string;
+    result: string | null;
+    ok: boolean | null;
+    exitCode: number | null;
+    truncated: boolean;
+  }[];
+
+  @Column({ type: 'simple-json', default: '[]' })
+  images: string[];
+
   @Column({ type: 'text', default: 'user' })
   role: 'user' | 'assistant';
 

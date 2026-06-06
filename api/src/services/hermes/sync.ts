@@ -1,7 +1,8 @@
 import { IsNull, In, QueryFailedError } from 'typeorm';
 import AppDataSource from '../../data-source';
 import { Agent, Conversation, Message } from '../../entities';
-import { getSessionMessages, listProfileSessionFiles, readSessionMeta } from './sessions';
+import { getSessionMessages, listProfileSessionFiles, listSessions, readSessionMeta } from './sessions';
+import { isAgentChatActive } from './activeChats';
 import { normalizeForMatch } from './textCleanup';
 
 function isSqliteUniqueConstraint(err: unknown): boolean {
@@ -95,57 +96,124 @@ export async function syncConversationFromHermes(
   const added: Message[] = [];
   let claimed = 0;
 
+  // Hermes session files list messages in chronological order but often
+  // omit per-message timestamps. We therefore can't trust `createdAt`
+  // alone to preserve order: rows imported live (or out-of-order across
+  // racing sync passes) can land within milliseconds of each other and
+  // even invert a turn (assistant above its user message). To guarantee
+  // the UI — which sorts by `createdAt` — renders in true session order,
+  // we walk the session sequence and force each row's `createdAt` to be
+  // strictly greater than the previous one's, repairing inversions in
+  // place. Rows already in order are left untouched.
+  let prevCreatedAtMs = 0;
+
   await sessionMessages.reduce<Promise<void>>(
     (chain, sm) =>
       chain.then(async () => {
+        const smKey = normalizeForMatch(sm.role, sm.text);
+        let row: Message | undefined;
+
         const hit = byExternalId.get(sm.externalId);
         if (hit) {
           // Already tied to this Hermes id — including soft-deleted rows.
-          // Respect user deletion: never undelete or duplicate.
-          return;
-        }
+          // Respect user deletion: never undelete or duplicate. We do
+          // backfill richer fields (thinking/tools/images) that older
+          // imports predate, so upgrading lights up past conversations.
+          const patch: Partial<Message> = {};
+          if (sm.thinking && !hit.thinking) patch.thinking = sm.thinking;
+          if (sm.toolCalls.length && !hit.toolCalls?.length) patch.toolCalls = sm.toolCalls;
+          if (sm.images.length && !hit.images?.length) patch.images = sm.images;
+          if (Object.keys(patch).length) await msgRepo.update(hit._id, patch);
 
-        const smKey = normalizeForMatch(sm.role, sm.text);
-        const candidate = claimablePool.find(
-          (c) => !c.claimed && c.msg.role === sm.role && c.key === smKey
-        );
-        if (candidate) {
-          candidate.claimed = true;
-          candidate.msg.externalId = sm.externalId;
-          if (sm.thinking && !candidate.msg.thinking) candidate.msg.thinking = sm.thinking;
-          await msgRepo.update(candidate.msg._id, {
-            externalId: sm.externalId,
-            thinking: candidate.msg.thinking,
-          });
-          claimed += 1;
-          byExternalId.set(sm.externalId, candidate.msg);
-          return;
-        }
-
-        const fresh = msgRepo.create({
-          conversationId: conv._id,
-          externalId: sm.externalId,
-          text: sm.text,
-          thinking: sm.thinking,
-          role: sm.role,
-          createdBy: ag?.createdBy ?? conv.createdBy,
-          createdAt: sm.timestamp ?? new Date(),
-        });
-        try {
-          const saved = await msgRepo.save(fresh);
-          byExternalId.set(sm.externalId, saved);
-          added.push(saved);
-        } catch (err) {
-          if (!(err instanceof QueryFailedError) || !isSqliteUniqueConstraint(err)) {
-            throw err;
+          // Sweep up a live-save orphan: when a concurrent poll imported
+          // this session row (giving it an externalId) before the chat
+          // handler's own row got claimed, that handler row is left with
+          // a null externalId and identical text — showing as a duplicate.
+          // `hit` is the canonical copy, so we hard-delete the orphan.
+          if (!hit.deletedAt) {
+            const orphan = claimablePool.find(
+              (c) => !c.claimed && c.msg._id !== hit._id && c.msg.role === sm.role && c.key === smKey
+            );
+            if (orphan) {
+              orphan.claimed = true;
+              await msgRepo.delete(orphan.msg._id);
+            }
           }
-          const row = await msgRepo.findOne({
-            where: { conversationId: conv._id, externalId: sm.externalId },
-            withDeleted: true,
-          });
-          if (!row) throw err;
-          // Row already exists: either soft-deleted (user hid this turn;
-          // UNIQUE still blocks insert) or a concurrent insert won. Swallow.
+          row = hit;
+        } else {
+          const candidate = claimablePool.find(
+            (c) => !c.claimed && c.msg.role === sm.role && c.key === smKey
+          );
+          if (candidate) {
+            candidate.claimed = true;
+            candidate.msg.externalId = sm.externalId;
+            if (sm.thinking && !candidate.msg.thinking) candidate.msg.thinking = sm.thinking;
+            if (sm.toolCalls.length && !candidate.msg.toolCalls?.length) {
+              candidate.msg.toolCalls = sm.toolCalls;
+            }
+            if (sm.images.length && !candidate.msg.images?.length) {
+              candidate.msg.images = sm.images;
+            }
+            await msgRepo.update(candidate.msg._id, {
+              externalId: sm.externalId,
+              thinking: candidate.msg.thinking,
+              toolCalls: candidate.msg.toolCalls,
+              images: candidate.msg.images,
+            });
+            claimed += 1;
+            byExternalId.set(sm.externalId, candidate.msg);
+            row = candidate.msg;
+          } else {
+            // Anchor a timestamp-less fresh import just after the previous
+            // turn so it can never sort ahead of it.
+            const desiredMs = sm.timestamp ? sm.timestamp.getTime() : Date.now();
+            const createdAtMs = Math.max(desiredMs, prevCreatedAtMs + 1);
+            const fresh = msgRepo.create({
+              conversationId: conv._id,
+              externalId: sm.externalId,
+              text: sm.text,
+              thinking: sm.thinking,
+              toolCalls: sm.toolCalls,
+              images: sm.images,
+              role: sm.role,
+              createdBy: ag?.createdBy ?? conv.createdBy,
+              createdAt: new Date(createdAtMs),
+            });
+            try {
+              const saved = await msgRepo.save(fresh);
+              byExternalId.set(sm.externalId, saved);
+              added.push(saved);
+              row = saved;
+            } catch (err) {
+              if (!(err instanceof QueryFailedError) || !isSqliteUniqueConstraint(err)) {
+                throw err;
+              }
+              const dupRow = await msgRepo.findOne({
+                where: { conversationId: conv._id, externalId: sm.externalId },
+                withDeleted: true,
+              });
+              if (!dupRow) throw err;
+              // Row already exists: either soft-deleted (user hid this turn;
+              // UNIQUE still blocks insert) or a concurrent insert won. Swallow.
+              row = dupRow;
+            }
+          }
+        }
+
+        // Keep `createdAt` monotonically increasing along the session
+        // sequence so the chat renders in true order even when timestamps
+        // are missing or were assigned out of order. Skip soft-deleted
+        // rows — they aren't rendered and shouldn't anchor the sequence.
+        if (row && !row.deletedAt) {
+          const curMs = new Date(row.createdAt).getTime();
+          if (curMs <= prevCreatedAtMs) {
+            const fixedAt = new Date(prevCreatedAtMs + 1);
+            await msgRepo.update(row._id, { createdAt: fixedAt });
+            row.createdAt = fixedAt;
+            prevCreatedAtMs += 1;
+          } else {
+            prevCreatedAtMs = curMs;
+          }
         }
       }),
     Promise.resolve()
@@ -175,7 +243,30 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
   const profile = profileFor(agent);
   const files = listProfileSessionFiles(profile);
   if (!files.length) return { created: [], synced: [] };
+  // All on-disk session ids — used to (re)sync conversations we already
+  // track, regardless of whether Hermes still lists them (old chats age
+  // out of `sessions list` but their history should keep syncing).
   const sessionIds = files.map((f) => f.id);
+
+  // New conversations, however, are only created for sessions Hermes
+  // itself lists as top-level chats. Agents spawn internal sub-sessions
+  // for delegated tasks (e.g. an image-gen skill writes its own session
+  // whose first "user" turn is a synthetic instruction like "Generate a
+  // random AI image and save it…"). Those live in the same directory but
+  // are NOT returned by `sessions list`; importing them leaks bogus
+  // conversations into the sidebar. If the listing comes back empty (CLI
+  // hiccup), fall back to all files so a transient error can't hide real
+  // sessions.
+  // A turn in flight for this agent is about to bind a (possibly brand
+  // new) session to the conversation the user is actually in. Don't race
+  // it by creating a competing conversation — the chat controller claims
+  // the session, and the next discovery pass after the turn finishes
+  // finds it already linked. Existing linked conversations still sync.
+  let creatableFiles: typeof files = [];
+  if (!isAgentChatActive(agent._id)) {
+    const listedIds = new Set(listSessions(profile).map((s) => s.id));
+    creatableFiles = listedIds.size ? files.filter((f) => listedIds.has(f.id)) : files;
+  }
 
   const convRepo = AppDataSource.getRepository(Conversation);
   const linked = await convRepo.find({
@@ -186,7 +277,7 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
 
   const created: Conversation[] = [];
   const now = Date.now();
-  await files.reduce<Promise<void>>(
+  await creatableFiles.reduce<Promise<void>>(
     (chain, file) =>
       chain.then(async () => {
         if (linkedKeys.has(file.id)) return;

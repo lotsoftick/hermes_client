@@ -25,6 +25,8 @@ router
   .route('/message/conversation/:conversationId(\\d+)/poll')
   .get(auth, validate.conversationId, controller.poll);
 
+router.route('/message/image').get(auth, controller.serveImage);
+
 router.route('/message').post(auth, validate.create, controller.create);
 router.route('/message/chat').post(auth, upload.array('files', 5), validate.chat, controller.chat);
 router.route('/message/:id(\\d+)').delete(auth, validate.id, controller.destroy);

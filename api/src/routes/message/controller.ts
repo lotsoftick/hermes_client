@@ -161,30 +161,53 @@ const chat: Chat = async (req, res, next) => {
       .filter((f) => hermes.isImage(f.originalName))
       .map((f) => f.absolutePath);
 
-    const result = await hermes.streamChat(res, promptForHermes, {
-      profile,
-      sessionId: conv.sessionKey ?? null,
-      imagePaths,
-    });
+    // Mark the agent as actively chatting for the whole stream-and-bind
+    // window. Discovery skips creating conversations for this agent while
+    // the flag is set, so a slow turn (e.g. image generation) can't race
+    // a background sidebar refresh into spinning up a duplicate thread for
+    // the session we're about to claim.
+    hermes.beginAgentChat(conv.agentId);
+    let result: Awaited<ReturnType<typeof hermes.streamChat>>;
+    try {
+      result = await hermes.streamChat(res, promptForHermes, {
+        profile,
+        sessionId: conv.sessionKey ?? null,
+        imagePaths,
+      });
 
-    // Persist the assistant turn BEFORE we close the SSE response. The
-    // client's `useSendMessage` hook calls `refetch()` the moment it
-    // sees the stream end, so anything saved after `res.end()` here
-    // would race the follow-up `getMessages` request and the bubble
-    // would briefly disappear from the UI.
-    if (result.sessionId && conv.sessionKey !== result.sessionId) {
-      await convRepo.update(conv._id, { sessionKey: result.sessionId });
-      conv.sessionKey = result.sessionId;
+      // Persist the assistant turn BEFORE we close the SSE response. The
+      // client's `useSendMessage` hook calls `refetch()` the moment it
+      // sees the stream end, so anything saved after `res.end()` here
+      // would race the follow-up `getMessages` request and the bubble
+      // would briefly disappear from the UI.
+      if (result.sessionId && conv.sessionKey !== result.sessionId) {
+        try {
+          await convRepo.update(conv._id, { sessionKey: result.sessionId });
+          conv.sessionKey = result.sessionId;
+        } catch (err) {
+          // The active-chat guard prevents discovery from racing us, but a
+          // stale conversation (e.g. a standalone `hermes` REPL session, or
+          // one left over from before that guard existed) could still own
+          // this sessionKey and trip UNIQUE(agentId, sessionKey). Don't fail
+          // the user's turn — the messages are saved and the next sidebar
+          // refresh reconciles.
+          console.error('[chat] sessionKey bind conflict:', err);
+        }
+      }
+    } finally {
+      hermes.endAgentChat(conv.agentId);
     }
     let savedAssistantId: number | null = null;
-    const assistantText =
-      result.text ||
-      result.error ||
-      (result.exitCode && result.exitCode !== 0
-        ? `Hermes exited with code ${result.exitCode} before producing a response.`
-        : !result.sessionId
-          ? 'Hermes did not return a response. Please retry your last message.'
-          : '');
+    const fallbackText = (() => {
+      if (result.exitCode && result.exitCode !== 0) {
+        return `Hermes exited with code ${result.exitCode} before producing a response.`;
+      }
+      if (!result.sessionId) {
+        return 'Hermes did not return a response. Please retry your last message.';
+      }
+      return '';
+    })();
+    const assistantText = result.text || result.error || fallbackText;
     if (assistantText) {
       const assistantMessage = msgRepo.create({
         conversationId: conv._id,
@@ -312,4 +335,25 @@ const serveUpload: RequestHandler<{ conversationId: string; filename: string }> 
   }
 };
 
-export { listByConversation, create, chat, destroy, poll, serveUpload };
+/**
+ * Serve an agent-produced image referenced in a tool result. The `path`
+ * is re-validated against the same allowlist used at parse time, so a
+ * crafted query can't turn this into an arbitrary-file reader.
+ */
+const serveImage: RequestHandler<never, unknown, never, { path?: string }> = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const requested = typeof req.query.path === 'string' ? req.query.path : '';
+    const safe = hermes.safeImagePath(requested);
+    if (!safe) return res.status(404).json({ error: 'Image not found' });
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    return res.sendFile(safe);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export { listByConversation, create, chat, destroy, poll, serveUpload, serveImage };

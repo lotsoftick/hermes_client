@@ -3,6 +3,7 @@ import path from 'path';
 import { hermesExec, stripAnsi } from './cli';
 import { profileSessionsDir } from './profiles';
 import { cleanMessageText } from './textCleanup';
+import { collectImageSrcs } from './images';
 
 export interface HermesSession {
   id: string;
@@ -11,12 +12,24 @@ export interface HermesSession {
   lastActiveAt: Date | null;
 }
 
+export interface SessionToolCall {
+  id: string;
+  name: string;
+  args: string;
+  result: string | null;
+  ok: boolean | null;
+  exitCode: number | null;
+  truncated: boolean;
+}
+
 export interface SessionMessage {
   externalId: string;
   role: 'user' | 'assistant';
   text: string;
   thinking: string | null;
   timestamp: Date | null;
+  toolCalls: SessionToolCall[];
+  images: string[];
 }
 
 const SESSION_ID_RE = /^\d{8}_\d{6}_[a-f0-9]+$/;
@@ -49,7 +62,10 @@ function parseSessionList(stdout: string): HermesSession[] {
       if (!idMatch) return null;
       const id = idMatch[1];
       const before = line.slice(0, line.length - idMatch[0].length).trimEnd();
-      const cols = before.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+      const cols = before
+        .split(/\s{2,}/)
+        .map((c) => c.trim())
+        .filter(Boolean);
       const title = cols[0] && cols[0] !== '—' ? cols[0] : null;
       const preview = cols[1] && cols[1] !== '—' ? cols[1] : null;
       return { id, title, preview, lastActiveAt: null } as HermesSession;
@@ -119,6 +135,13 @@ export function findLatestClientSession(
   return candidates[0]?.id ?? null;
 }
 
+interface RawToolCall {
+  id?: string;
+  function?: { name?: string; arguments?: unknown };
+  name?: string;
+  arguments?: unknown;
+}
+
 interface RawSessionRow {
   id?: string;
   message_id?: string;
@@ -126,6 +149,11 @@ interface RawSessionRow {
   content?: unknown;
   text?: string;
   thinking?: string;
+  reasoning?: string;
+  reasoning_content?: string;
+  tool_calls?: RawToolCall[];
+  tool_call_id?: string;
+  name?: string;
   timestamp?: string;
   created_at?: string;
 }
@@ -153,6 +181,54 @@ function flattenContent(content: unknown): string {
   return '';
 }
 
+/** Tool args/results can be huge (browser snapshots). Cap what we persist. */
+const TOOL_ARGS_CAP = 2_000;
+const TOOL_RESULT_CAP = 4_000;
+
+function truncate(value: string, cap: number): string {
+  return value.length > cap ? `${value.slice(0, cap)}…` : value;
+}
+
+function stringifyToolValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Best-effort success flag from a tool result. Tool authors are
+ * inconsistent, so we look at the common shapes: an explicit `success`
+ * boolean, a non-empty `error`, or a non-zero `exit_code`.
+ */
+function parseToolOk(raw: string): boolean | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const obj = JSON.parse(trimmed) as Record<string, unknown>;
+    if (typeof obj.success === 'boolean') return obj.success;
+    if ('error' in obj && obj.error) return false;
+    if (typeof obj.exit_code === 'number') return obj.exit_code === 0;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseExitCode(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const obj = JSON.parse(trimmed) as Record<string, unknown>;
+    return typeof obj.exit_code === 'number' ? obj.exit_code : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Best-effort parser for a Hermes session JSON file. The on-disk schema is
  * not part of the public API; this code accepts a few common shapes
@@ -177,9 +253,62 @@ export function getSessionMessages(
     return [];
   }
   const rows = data.messages ?? data.events ?? [];
-  return rows.reduce<SessionMessage[]>((acc, row, idx) => {
+
+  // The agent loop interleaves assistant rows that *call* tools with
+  // `role: 'tool'` rows that carry the results, before a final assistant
+  // row with the prose answer. We collect tool calls (and the images
+  // their output references) as we go and attach them to the next
+  // assistant turn that actually has text — mirroring how the desktop
+  // app shows tool chips above the reply.
+  const out: SessionMessage[] = [];
+  let pendingCalls: SessionToolCall[] = [];
+  let pendingImages: string[] = [];
+  const callsById = new Map<string, SessionToolCall>();
+
+  const drainPending = (): { toolCalls: SessionToolCall[]; images: string[] } => {
+    const toolCalls = pendingCalls;
+    const images = pendingImages;
+    pendingCalls = [];
+    pendingImages = [];
+    callsById.clear();
+    return { toolCalls, images };
+  };
+
+  rows.forEach((row, idx) => {
+    if (row.role === 'tool') {
+      const resultRaw = stringifyToolValue(row.content ?? row.text);
+      pendingImages.push(...collectImageSrcs([resultRaw]));
+      const call = row.tool_call_id ? callsById.get(row.tool_call_id) : undefined;
+      if (call) {
+        call.result = truncate(resultRaw, TOOL_RESULT_CAP);
+        call.truncated = resultRaw.length > TOOL_RESULT_CAP;
+        call.ok = parseToolOk(resultRaw);
+        call.exitCode = parseExitCode(resultRaw);
+      }
+      return;
+    }
+
     const role = row.role === 'assistant' || row.role === 'user' ? row.role : null;
-    if (!role) return acc;
+    if (!role) return;
+
+    if (role === 'assistant' && Array.isArray(row.tool_calls)) {
+      row.tool_calls.forEach((tc, tcIdx) => {
+        const argsRaw = stringifyToolValue(tc.function?.arguments ?? tc.arguments);
+        pendingImages.push(...collectImageSrcs([argsRaw]));
+        const call: SessionToolCall = {
+          id: tc.id || `${sessionId}:${idx}:${tcIdx}`,
+          name: tc.function?.name || tc.name || 'tool',
+          args: truncate(argsRaw, TOOL_ARGS_CAP),
+          result: null,
+          ok: null,
+          exitCode: null,
+          truncated: false,
+        };
+        pendingCalls.push(call);
+        if (tc.id) callsById.set(tc.id, call);
+      });
+    }
+
     const raw = (row.text ?? flattenContent(row.content)).trim();
     // Strip Hermes-side prompt-engineering wrappers (auto-injected vision
     // pre-analysis, image hints, file footers, resume banners). What we
@@ -187,18 +316,36 @@ export function getSessionMessages(
     // replied — the rest is noise that would otherwise duplicate-display
     // and break sync claim matching.
     const text = cleanMessageText(role, raw);
-    if (!text) return acc;
+    // An assistant row with only tool_calls (no prose yet) holds its
+    // calls back for the upcoming answer row. A user row resets any
+    // stragglers so they don't leak into the wrong turn.
+    if (!text) {
+      if (role === 'user') drainPending();
+      return;
+    }
+
+    const reasoning = row.reasoning ?? row.reasoning_content ?? row.thinking;
     const externalId = row.id || row.message_id || `${sessionId}:${idx}`;
     const ts = row.timestamp || row.created_at;
-    acc.push({
+    const { toolCalls, images: toolImages } =
+      role === 'assistant' ? drainPending() : { toolCalls: [], images: [] };
+    // Also scan the assistant's prose itself: agents routinely announce a
+    // generated file inline ("It is saved here: …/ai_image.svg") without
+    // the path appearing in any structured tool result.
+    const images =
+      role === 'assistant' ? Array.from(new Set([...toolImages, ...collectImageSrcs([text])])) : [];
+    out.push({
       externalId,
       role,
       text,
-      thinking: row.thinking ? String(row.thinking) : null,
+      thinking: reasoning ? String(reasoning) : null,
       timestamp: ts ? new Date(ts) : null,
+      toolCalls,
+      images,
     });
-    return acc;
-  }, []);
+  });
+
+  return out;
 }
 
 /**
@@ -211,9 +358,7 @@ export interface SessionFileEntry {
   mtimeMs: number;
 }
 
-export function listProfileSessionFiles(
-  profile: string | undefined | null
-): SessionFileEntry[] {
+export function listProfileSessionFiles(profile: string | undefined | null): SessionFileEntry[] {
   const dir = profileSessionsDir(profile);
   if (!fs.existsSync(dir)) return [];
   return fs

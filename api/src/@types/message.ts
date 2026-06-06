@@ -11,6 +11,16 @@ export type MessageFile = {
   url: string;
 };
 
+export type MessageToolCall = {
+  id: string;
+  name: string;
+  args: string;
+  result: string | null;
+  ok: boolean | null;
+  exitCode: number | null;
+  truncated: boolean;
+};
+
 export type MessageResponse = {
   _id: number;
   conversationId: number;
@@ -18,6 +28,8 @@ export type MessageResponse = {
   text: string;
   thinking: string | null;
   files: MessageFile[];
+  toolCalls: MessageToolCall[];
+  images: string[];
   role: MessageRole;
   createdBy: number;
   createdAt: Date | string;
