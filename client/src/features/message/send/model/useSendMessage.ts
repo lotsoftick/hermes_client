@@ -9,10 +9,21 @@ interface UseSendMessageArgs {
   hasMessages: boolean;
 }
 
+/** A tool invocation streamed live during the current turn. */
+export interface StreamingToolCall {
+  id: string;
+  name: string;
+  /** Short human label for the call (e.g. the command or file involved). */
+  label?: string;
+  status: 'running' | 'done';
+  summary?: string;
+}
+
 export interface SendMessageState {
   isStreaming: boolean;
   streamingText: string;
   streamingThinking: string;
+  streamingTools: StreamingToolCall[];
   streamError: string | null;
   pendingUserText: string;
   pendingFilesPreviews: MessageFile[];
@@ -32,6 +43,7 @@ export function useSendMessage({
 }: UseSendMessageArgs): SendMessageState {
   const [streamingText, setStreamingText] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
+  const [streamingTools, setStreamingTools] = useState<StreamingToolCall[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingUserText, setPendingUserText] = useState('');
@@ -64,6 +76,7 @@ export function useSendMessage({
       setPendingFilesPreviews(previews);
       setStreamingText('');
       setStreamingThinking('');
+      setStreamingTools([]);
       setStreamError(null);
       setIsStreaming(true);
 
@@ -115,6 +128,28 @@ export function useSendMessage({
             } else if (event.type === 'response.thinking.delta' && event.delta) {
               accThinking += event.delta;
               setStreamingThinking(accThinking);
+            } else if (event.type === 'tool.start' && event.id) {
+              setStreamingTools((prev) => [
+                ...prev.filter((t) => t.id !== event.id),
+                {
+                  id: String(event.id),
+                  name: String(event.name || 'tool'),
+                  label: event.label ? String(event.label) : undefined,
+                  status: 'running',
+                },
+              ]);
+            } else if (event.type === 'tool.complete' && event.id) {
+              setStreamingTools((prev) =>
+                prev.map((t) =>
+                  t.id === event.id
+                    ? {
+                        ...t,
+                        status: 'done',
+                        summary: event.summary ? String(event.summary) : t.summary,
+                      }
+                    : t
+                )
+              );
             } else if (event.type === 'response.error' && event.delta) {
               setStreamError(String(event.delta));
             }
@@ -148,6 +183,7 @@ export function useSendMessage({
         setIsStreaming(false);
         setStreamingText('');
         setStreamingThinking('');
+        setStreamingTools([]);
         setPendingUserText('');
         setPendingFilesPreviews((prev) => {
           prev.forEach((f) => URL.revokeObjectURL(f.url));
@@ -163,6 +199,7 @@ export function useSendMessage({
     isStreaming,
     streamingText,
     streamingThinking,
+    streamingTools,
     streamError,
     pendingUserText,
     pendingFilesPreviews,

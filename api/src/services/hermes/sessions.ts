@@ -95,12 +95,37 @@ export function listSessions(
   return parseSessionList(result.stdout);
 }
 
+/**
+ * TTL cache for the bare `listSessions(profile)` call. Discovery only needs
+ * the listing to classify *unlinked* on-disk sessions (top-level chat vs
+ * internal sub-session), and the sidebar polls discovery every few seconds —
+ * without a cache each poll would fork one `hermes sessions list` subprocess
+ * per agent. Mirrors the gateway-status cache pattern.
+ */
+const SESSION_LIST_TTL_MS = 15_000;
+const sessionListCache = new Map<string, { value: HermesSession[]; expiresAt: number }>();
+
+export function listSessionsCached(profile: string | undefined | null): HermesSession[] {
+  const key = profile || 'default';
+  const cached = sessionListCache.get(key);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.value;
+  const fresh = listSessions(profile);
+  sessionListCache.set(key, { value: fresh, expiresAt: now + SESSION_LIST_TTL_MS });
+  return fresh;
+}
+
+function invalidateSessionListCache(profile: string | undefined | null): void {
+  sessionListCache.delete(profile || 'default');
+}
+
 export function deleteSession(
   profile: string | undefined | null,
   sessionId: string
 ): { ok: boolean; error?: string } {
   if (!isValidSessionId(sessionId)) return { ok: false, error: 'Invalid session id' };
   const result = hermesExec(['sessions', 'delete', '-y', sessionId], { profile });
+  invalidateSessionListCache(profile);
   if (!result.ok) return { ok: false, error: result.stderr || result.stdout || result.error };
   return { ok: true };
 }
@@ -112,6 +137,7 @@ export function renameSession(
 ): { ok: boolean; error?: string } {
   if (!isValidSessionId(sessionId)) return { ok: false, error: 'Invalid session id' };
   const result = hermesExec(['sessions', 'rename', sessionId, title], { profile });
+  invalidateSessionListCache(profile);
   if (!result.ok) return { ok: false, error: result.stderr || result.stdout || result.error };
   return { ok: true };
 }
@@ -120,25 +146,34 @@ export function renameSession(
  * Find the most recent session created with our SESSION_SOURCE tag whose
  * mtime is at or after `sinceMs`. Used to discover the session id for a
  * just-completed chat invocation.
+ *
+ * `excludeIds` filters out sessions already claimed by other in-flight or
+ * just-finished chat turns, so concurrent chats on the same profile can't
+ * resolve to each other's session.
  */
 export function findLatestClientSession(
   profile: string | undefined | null,
-  sinceMs: number
+  sinceMs: number,
+  excludeIds: string[] = []
 ): string | null {
   if (stateDb.hasStateDb(profile)) {
     try {
-      return stateDb.latestStateSessionSince(profile, sinceMs);
+      return stateDb.latestStateSessionSince(profile, sinceMs, {
+        source: SESSION_SOURCE,
+        excludeIds,
+      });
     } catch {
       /* fall through to the legacy session-file scan */
     }
   }
+  const excluded = new Set(excludeIds);
   const dir = profileSessionsDir(profile);
   if (!fs.existsSync(dir)) return null;
   const candidates = fs
     .readdirSync(dir)
     .map((file) => {
       const m = file.match(/^session_(\d{8}_\d{6}_[a-f0-9]+)\.json$/);
-      if (!m) return null;
+      if (!m || excluded.has(m[1])) return null;
       try {
         const stat = fs.statSync(path.join(dir, file));
         if (stat.mtimeMs < sinceMs - 2_000) return null;
@@ -286,21 +321,50 @@ function buildSessionMessages(sessionId: string, rows: RawSessionRow[]): Session
   // The agent loop interleaves assistant rows that *call* tools with
   // `role: 'tool'` rows that carry the results, before a final assistant
   // row with the prose answer. We collect tool calls (and the images
-  // their output references) as we go and attach them to the next
-  // assistant turn that actually has text — mirroring how the desktop
-  // app shows tool chips above the reply.
+  // their output references) as we go and attach them to the final
+  // assistant turn of the round — mirroring how the desktop app shows
+  // tool chips inside a single reply.
+  //
+  // Tool-calling assistant rows often carry narration too ("Executing
+  // three tool calls in parallel…"). Emitting that prose as its own
+  // message splits one logical turn into several bubbles, so we fold it
+  // (plus any reasoning on those rows) into the thinking block of the
+  // turn's final answer instead.
   const out: SessionMessage[] = [];
   let pendingCalls: SessionToolCall[] = [];
   let pendingImages: string[] = [];
+  let pendingThinking: string[] = [];
+  let pendingMeta: { externalId: string; ts?: string } | null = null;
   const callsById = new Map<string, SessionToolCall>();
 
-  const drainPending = (): { toolCalls: SessionToolCall[]; images: string[] } => {
+  const drainPending = (): { toolCalls: SessionToolCall[]; images: string[]; thinking: string[] } => {
     const toolCalls = pendingCalls;
     const images = pendingImages;
+    const thinking = pendingThinking;
     pendingCalls = [];
     pendingImages = [];
+    pendingThinking = [];
+    pendingMeta = null;
     callsById.clear();
-    return { toolCalls, images };
+    return { toolCalls, images, thinking };
+  };
+
+  // A round that never reached its final answer row (interrupted turn, or
+  // a user message arriving mid-round) still has narration worth showing.
+  const flushOrphanedRound = (): void => {
+    const meta = pendingMeta;
+    const { toolCalls, images, thinking } = drainPending();
+    if (!meta || !thinking.length) return;
+    const [text, ...rest] = thinking;
+    out.push({
+      externalId: meta.externalId,
+      role: 'assistant',
+      text,
+      thinking: rest.length ? rest.join('\n\n') : null,
+      timestamp: meta.ts ? new Date(meta.ts) : null,
+      toolCalls,
+      images: Array.from(new Set([...images, ...collectImageSrcs([text])])),
+    });
   };
 
   rows.forEach((row, idx) => {
@@ -320,8 +384,9 @@ function buildSessionMessages(sessionId: string, rows: RawSessionRow[]): Session
     const role = row.role === 'assistant' || row.role === 'user' ? row.role : null;
     if (!role) return;
 
-    if (role === 'assistant' && Array.isArray(row.tool_calls)) {
-      row.tool_calls.forEach((tc, tcIdx) => {
+    const isToolCallRow = role === 'assistant' && Array.isArray(row.tool_calls) && row.tool_calls.length > 0;
+    if (isToolCallRow) {
+      row.tool_calls!.forEach((tc, tcIdx) => {
         const argsRaw = stringifyToolValue(tc.function?.arguments ?? tc.arguments);
         pendingImages.push(...collectImageSrcs([argsRaw]));
         const call: SessionToolCall = {
@@ -345,19 +410,38 @@ function buildSessionMessages(sessionId: string, rows: RawSessionRow[]): Session
     // replied — the rest is noise that would otherwise duplicate-display
     // and break sync claim matching.
     const text = cleanMessageText(role, raw);
-    // An assistant row with only tool_calls (no prose yet) holds its
-    // calls back for the upcoming answer row. A user row resets any
-    // stragglers so they don't leak into the wrong turn.
-    if (!text) {
-      if (role === 'user') drainPending();
+    const reasoning = row.reasoning ?? row.reasoning_content ?? row.thinking;
+
+    if (isToolCallRow) {
+      // Hold this round's narration/reasoning back for the answer row
+      // instead of emitting a standalone bubble per tool-calling step.
+      if (reasoning) pendingThinking.push(String(reasoning));
+      if (text) {
+        pendingThinking.push(text);
+        pendingImages.push(...collectImageSrcs([text]));
+      }
+      pendingMeta = {
+        externalId: row.id || row.message_id || `${sessionId}:${idx}`,
+        ts: row.timestamp || row.created_at,
+      };
       return;
     }
 
-    const reasoning = row.reasoning ?? row.reasoning_content ?? row.thinking;
+    if (!text) {
+      // A user row arriving with stragglers means the previous round never
+      // produced a final answer — surface what it did say, then move on.
+      if (role === 'user') flushOrphanedRound();
+      return;
+    }
+
+    if (role === 'user') flushOrphanedRound();
+
     const externalId = row.id || row.message_id || `${sessionId}:${idx}`;
     const ts = row.timestamp || row.created_at;
-    const { toolCalls, images: toolImages } =
-      role === 'assistant' ? drainPending() : { toolCalls: [], images: [] };
+    const { toolCalls, images: toolImages, thinking: heldThinking } =
+      role === 'assistant' ? drainPending() : { toolCalls: [], images: [], thinking: [] };
+    const thinkingParts = role === 'assistant' ? [...heldThinking] : [];
+    if (role === 'assistant' && reasoning) thinkingParts.push(String(reasoning));
     // Also scan the assistant's prose itself: agents routinely announce a
     // generated file inline ("It is saved here: …/ai_image.svg") without
     // the path appearing in any structured tool result.
@@ -367,12 +451,15 @@ function buildSessionMessages(sessionId: string, rows: RawSessionRow[]): Session
       externalId,
       role,
       text,
-      thinking: reasoning ? String(reasoning) : null,
+      thinking: thinkingParts.length ? thinkingParts.join('\n\n') : null,
       timestamp: ts ? new Date(ts) : null,
       toolCalls,
       images,
     });
   });
+
+  // Session ended mid-round (interrupted turn with no final answer).
+  flushOrphanedRound();
 
   return out;
 }

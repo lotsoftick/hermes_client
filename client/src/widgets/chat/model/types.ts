@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import type { Message, MessageFile } from '../../../entities/message';
+import type { StreamingToolCall } from '../../../features/message/send';
 
 export interface ChatState {
   messages: Message[];
@@ -11,6 +12,7 @@ export interface ChatState {
   isStreaming: boolean;
   streamingText: string;
   streamingThinking: string;
+  streamingTools: StreamingToolCall[];
   streamError: string | null;
   pendingUserText: string;
   pendingFilesPreviews: MessageFile[];

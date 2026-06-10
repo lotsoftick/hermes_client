@@ -42,6 +42,7 @@ export function useChat(conversationId: string | undefined): ChatState {
     isStreaming,
     streamingText,
     streamingThinking,
+    streamingTools,
     streamError,
     pendingUserText,
     pendingFilesPreviews,
@@ -131,12 +132,12 @@ export function useChat(conversationId: string | undefined): ChatState {
   }, [messages, conversationId, pendingUserText, pendingFilesPreviews]);
 
   useEffect(() => {
-    if (!streamingText && !streamingThinking) return;
+    if (!streamingText && !streamingThinking && streamingTools.length === 0) return;
     const now = Date.now();
     if (now - scrollTickRef.current < 200) return;
     scrollTickRef.current = now;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamingText, streamingThinking]);
+  }, [streamingText, streamingThinking, streamingTools]);
 
   const [prevConvId, setPrevConvId] = useState(conversationId);
   if (prevConvId !== conversationId) {
@@ -179,6 +180,7 @@ export function useChat(conversationId: string | undefined): ChatState {
     isStreaming,
     streamingText,
     streamingThinking,
+    streamingTools,
     streamError,
     pendingUserText,
     pendingFilesPreviews,

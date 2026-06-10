@@ -1,7 +1,7 @@
 import { IsNull, In, QueryFailedError } from 'typeorm';
 import AppDataSource from '../../data-source';
 import { Agent, Conversation, Message } from '../../entities';
-import { getSessionMessages, listProfileSessionFiles, listSessions, readSessionMeta } from './sessions';
+import { getSessionMessages, listProfileSessionFiles, listSessionsCached, readSessionMeta } from './sessions';
 import { isAgentChatActive } from './activeChats';
 import { normalizeForMatch } from './textCleanup';
 
@@ -248,6 +248,13 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
   // out of `sessions list` but their history should keep syncing).
   const sessionIds = files.map((f) => f.id);
 
+  const convRepo = AppDataSource.getRepository(Conversation);
+  const linked = await convRepo.find({
+    where: { agentId: agent._id, sessionKey: In(sessionIds) },
+    withDeleted: true,
+  });
+  const linkedKeys = new Set(linked.map((c) => c.sessionKey).filter((x): x is string => !!x));
+
   // New conversations, however, are only created for sessions Hermes
   // itself lists as top-level chats. Agents spawn internal sub-sessions
   // for delegated tasks (e.g. an image-gen skill writes its own session
@@ -262,18 +269,20 @@ export async function discoverProfileSessions(agent: Agent): Promise<DiscoveryRe
   // it by creating a competing conversation — the chat controller claims
   // the session, and the next discovery pass after the turn finishes
   // finds it already linked. Existing linked conversations still sync.
+  //
+  // `sessions list` is a subprocess fork, and this discovery pass runs on
+  // every sidebar poll for every agent. So we only classify when there is
+  // actually an unlinked session on disk — in the steady state (everything
+  // already linked) discovery costs zero subprocesses — and the listing
+  // itself is TTL-cached per profile.
   let creatableFiles: typeof files = [];
   if (!isAgentChatActive(agent._id)) {
-    const listedIds = new Set(listSessions(profile).map((s) => s.id));
-    creatableFiles = listedIds.size ? files.filter((f) => listedIds.has(f.id)) : files;
+    const unlinked = files.filter((f) => !linkedKeys.has(f.id));
+    if (unlinked.length) {
+      const listedIds = new Set(listSessionsCached(profile).map((s) => s.id));
+      creatableFiles = listedIds.size ? unlinked.filter((f) => listedIds.has(f.id)) : unlinked;
+    }
   }
-
-  const convRepo = AppDataSource.getRepository(Conversation);
-  const linked = await convRepo.find({
-    where: { agentId: agent._id, sessionKey: In(sessionIds) },
-    withDeleted: true,
-  });
-  const linkedKeys = new Set(linked.map((c) => c.sessionKey).filter((x): x is string => !!x));
 
   const created: Conversation[] = [];
   const now = Date.now();

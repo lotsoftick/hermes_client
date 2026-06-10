@@ -1,5 +1,6 @@
 import { Alert, Box, Typography, CircularProgress } from '@mui/material';
 import { MessageBubble } from '../../../entities/message';
+import StreamingToolActivity from './StreamingToolActivity';
 import type { ChatState } from '../model/types';
 
 interface MessageListProps {
@@ -15,6 +16,7 @@ export default function MessageList({ chat }: MessageListProps) {
     isStreaming,
     streamingText,
     streamingThinking,
+    streamingTools,
     streamError,
     pendingUserText,
     pendingFilesPreviews,
@@ -98,6 +100,7 @@ export default function MessageList({ chat }: MessageListProps) {
               message={{ text: pendingUserText, role: 'user', files: pendingFilesPreviews }}
             />
           )}
+          {isStreaming && <StreamingToolActivity tools={streamingTools} />}
           {isStreaming && (streamingText || streamingThinking) && (
             <MessageBubble
               message={{ text: streamingText, role: 'assistant' }}
@@ -105,7 +108,7 @@ export default function MessageList({ chat }: MessageListProps) {
               thinkingText={streamingThinking}
             />
           )}
-          {isStreaming && !streamingText && !streamingThinking && (
+          {isStreaming && !streamingText && !streamingThinking && streamingTools.length === 0 && (
             <Box sx={{ display: 'flex', gap: 0.8, py: 1.5, px: 1 }}>
               {[0, 1, 2].map((i) => (
                 <Box

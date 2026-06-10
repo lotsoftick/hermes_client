@@ -208,21 +208,39 @@ export function listCronSessions(
  * The most recently started session at or after `sinceMs`. Mirrors the old
  * "newest session file modified since X" heuristic used to resolve the id of
  * a just-finished `hermes chat` run.
+ *
+ * `source` narrows the match to sessions created with that `--source` tag,
+ * so a standalone REPL session (source `cli`) started in the same window
+ * can't be mistaken for ours. `excludeIds` drops sessions already claimed
+ * by other in-flight chat turns — without it, two concurrent fresh chats on
+ * the same profile could both resolve to the same (latest) session.
  */
 export function latestStateSessionSince(
   profile: string | undefined | null,
-  sinceMs: number
+  sinceMs: number,
+  opts: { source?: string; excludeIds?: string[] } = {}
 ): string | null {
   return (
     withDb(profile, (db) => {
       const cutoff = sinceMs / 1000 - 2; // small grace, like the JSON path
+      const where = ['started_at >= ?'];
+      const params: unknown[] = [cutoff];
+      if (opts.source) {
+        where.push('source = ?');
+        params.push(opts.source);
+      }
+      const excludeIds = opts.excludeIds ?? [];
+      if (excludeIds.length) {
+        where.push(`id NOT IN (${excludeIds.map(() => '?').join(', ')})`);
+        params.push(...excludeIds);
+      }
       const row = db
         .prepare(
           `SELECT id FROM sessions
-            WHERE started_at >= ?
+            WHERE ${where.join(' AND ')}
             ORDER BY started_at DESC LIMIT 1`
         )
-        .get(cutoff) as { id: string } | undefined;
+        .get(...params) as { id: string } | undefined;
       return row?.id ?? null;
     }) ?? null
   );
